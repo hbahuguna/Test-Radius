@@ -1,0 +1,75 @@
+# Context: TestSquad – Developer Tool for Flaky Test Frustration
+
+You are building a single‑page landing page for **TestSquad**, a B2B SaaS developer tool. Use the following specifications exactly.
+
+## Product & Positioning
+- **Product name:** TestSquad
+- **Tagline (primary headline):** Stop flaky tests. Ship with confidence.
+- **Sub‑headline:** TestSquad runs only the tests impacted by your code changes – so you stop debugging false failures and start shipping faster.
+- **Core value proposition (from Russell Brand feedback):** Save developer frustration, not just compute. Flaky tests are the enemy.
+- **Target Customer Archetype:** Engineering Manager at a mid‑sized SaaS company (20–100 engineers). They are responsible for CI/CD performance, developer productivity, and release confidence. They are frustrated with slow CI, flaky tests, and lack of trust in skipping tests.
+- **Chosen Revenue Model (not yet public, but hint at it):** Per‑seat SaaS subscription (starting at $29/user/month). For the landing page, focus on value, not pricing – but include a “starting at” or “request early access” to gauge interest.
+- **Primary Call to Action (CTA):** Collect email addresses for early access / pilot interest. Do NOT ask for payment yet.
+
+## Customer Problem (from your research)
+Engineering teams run entire test suites on every PR because they lack confidence in skipping tests. This leads to:
+- Slow CI feedback loops (30–60 minutes per PR)
+- Flaky test noise → engineers ignore failures → real bugs slip through
+- Developer frustration and burnout
+- Release bottlenecks
+
+## Solution (how TestSquad works)
+- **Intelligent test selection** – uses code dependency mapping (AST + graph) to select only impacted tests.
+- **Explainable** – shows *why* each test was selected or skipped (no black box).
+- **Shadow mode** – runs alongside your existing CI to prove safety before you commit.
+- **Integrates in minutes** – GitHub Actions, Jenkins, CircleCI.
+
+## Key differentiators vs competitors (from your analysis)
+- Not a black‑box AI (Launchable) – TestSquad is explainable.
+- Not a bloated enterprise suite (Parasoft) – lightweight and developer‑first.
+- Not a test generator (Claude, Wuri) – it’s a **decision layer** that selects *which* tests to run.
+
+## Landing Page Sections (must include)
+1. **Hero section** – headline, subheadline, primary CTA button (“Get Early Access” or “Join the Pilot”), optional screenshot placeholder.
+2. **Problem section** – 2–3 sentences describing the frustration of flaky tests and slow CI. Use emotional language (“developers waste hours re‑running pipelines”).
+3. **Solution section** – How TestSquad works (simple diagram or 3 bullet points: “1. Maps code changes, 2. Selects impacted tests, 3. Eliminates flaky noise”).
+4. **Differentiation / Why TestSquad** – 3 comparison cards vs “running all tests”, “black‑box AI”, “manual test tagging”.
+5. **Proof / Social proof placeholder** – “Validated on Django” (add a logo or stat like “reduced test runs from 735 → 42”). Since you don’t have live data yet, use placeholder text: “Coming soon: open‑source validation results”.
+6. **Pricing hint** – “Simple per‑seat pricing starting at $29/user/month. No surprises. Cancel anytime.” (No actual payment on this page – just email capture.)
+7. **Email capture form** – Fields: Email address (required), optionally “Company” and “Role”. Include a privacy note: “We’ll never spam you. Only early access updates.”
+8. **Footer** – Copyright, placeholder links (About, Contact – can be mailto:).
+
+## Design & Technical Requirements
+- **Stack:** HTML/CSS/JS (static). Use Tailwind CSS or plain CSS with a modern, clean, developer‑friendly aesthetic (dark or light? Preference: light background, subtle gradients, sans‑serif font like Inter or SF Pro).
+- **Mobile responsive** – must work on all devices.
+- **Form submission:** Store emails in a Google Sheet (via Formspree, Getform, or a simple `fetch` to a Google Apps Script web app). Since this is Replit, you can also use a simple local `localStorage` mock for demo, but include instructions to connect to a real endpoint. Better: provide a working Formspree endpoint placeholder (user can replace with their own).
+- **Animations:** Minimal – fade‑in on scroll, subtle hover effects. No heavy JavaScript.
+- **Logo:** Use text “TestSquad” in a bold, simple font (no image needed).
+- **Images:** Use placeholders from Unsplash or SVG illustrations (e.g., developer at desk, CI pipeline diagram). Provide attribution or use free icons from FontAwesome or Heroicons.
+
+## Deliverable
+Write the complete HTML/CSS/JS code for the landing page. Include:
+- A working email capture form (client‑side validation, then POST to a placeholder endpoint – e.g., `https://formspree.io/f/your-endpoint` – with a comment instructing the user to replace the endpoint).
+- Comments in the code explaining each section.
+- Responsive layout (flex/grid).
+- No external dependencies unless necessary (Tailwind CDN is fine).
+
+## Tone & Voice
+- Professional, direct, no hype.
+- Speak the language of engineers and engineering managers.
+- Use short sentences and bullet points.
+- Avoid buzzwords like “revolutionary”, “AI‑powered platform” (unless clearly differentiated).
+- Emphasize **trust, explainability, and eliminating frustration**.
+
+## Example CTA button text
+- “Get early access”
+- “Join the pilot”
+- “Notify me when ready”
+
+## What to avoid
+- No payment processing on this page.
+- No fake testimonials (use placeholder “Early users say…” with generic quotes or leave empty).
+- No misleading claims – be honest that this is a pre‑product validation page.
+
+## Final check
+Ensure the page answers: “What problem do you solve? For whom? Why is your approach different? What do you want me to do next?”
