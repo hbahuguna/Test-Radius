@@ -468,6 +468,7 @@ function App() {
 
 function EarlyAccessForm() {
   const [status, setStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
+  const [errorMsg, setErrorMsg] = useState('');
   const [email, setEmail] = useState('');
   const [company, setCompany] = useState('');
   const [role, setRole] = useState('');
@@ -493,6 +494,7 @@ function EarlyAccessForm() {
       });
 
       const data = await response.json();
+      console.log('Web3Forms response:', data);
 
       if (data.success) {
         setStatus('success');
@@ -500,9 +502,11 @@ function EarlyAccessForm() {
         setCompany('');
         setRole('');
       } else {
+        setErrorMsg(data.message || 'Unknown error from Web3Forms');
         setStatus('error');
       }
     } catch (error) {
+      setErrorMsg(String(error));
       setStatus('error');
     }
   };
@@ -533,7 +537,7 @@ function EarlyAccessForm() {
       {status === 'error' && (
         <div className="p-4 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm flex items-start gap-3">
           <AlertCircle size={18} className="shrink-0 mt-0.5" />
-          <p>Something went wrong submitting your request. Please try again or email us directly.</p>
+          <p>{errorMsg || 'Something went wrong. Please try again or email us directly.'}</p>
         </div>
       )}
       
