@@ -19,6 +19,7 @@ export function TestSquadLogo({ className = "", height = 36 }: TestSquadLogoProp
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
+      role="img"
       aria-label="TestSquad"
     >
       {/* Icon mark — two overlapping rounded rectangles forming a TS monogram */}
