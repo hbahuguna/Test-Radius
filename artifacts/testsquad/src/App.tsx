@@ -47,7 +47,7 @@ function App() {
       <main className="pt-16">
         {/* Hero Section */}
         <section className="relative pt-24 pb-32 overflow-hidden">
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-primary/10 via-background to-background -z-10" />
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-primary/12 via-[#3daa9a]/6 to-background -z-10" />
           
           <div className="max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-16 items-center">
             <motion.div 
@@ -66,7 +66,7 @@ function App() {
               
               <motion.h1 variants={fadeInUp} className="text-5xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight leading-[1.1] mb-6 text-foreground">
                 Stop flaky tests. <br/>
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-primary/60">
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-[#3daa9a]">
                   Ship with confidence.
                 </span>
               </motion.h1>
@@ -125,7 +125,7 @@ function App() {
                   </div>
                 </div>
               </div>
-              <div className="absolute -inset-4 bg-gradient-to-r from-primary/20 to-blue-500/20 blur-2xl -z-10 rounded-full opacity-50"></div>
+              <div className="absolute -inset-4 bg-gradient-to-r from-primary/20 to-[#3daa9a]/30 blur-2xl -z-10 rounded-full opacity-50"></div>
             </motion.div>
           </div>
         </section>
@@ -215,7 +215,7 @@ function App() {
             </motion.div>
 
             <div className="grid md:grid-cols-3 gap-12 relative">
-              <div className="hidden md:block absolute top-1/2 left-[10%] right-[10%] h-0.5 bg-gradient-to-r from-primary/10 via-primary/30 to-primary/10 -translate-y-1/2 -z-10"></div>
+              <div className="hidden md:block absolute top-1/2 left-[10%] right-[10%] h-0.5 bg-gradient-to-r from-primary/20 via-[#3daa9a]/40 to-primary/20 -translate-y-1/2 -z-10"></div>
               
               <motion.div 
                 initial="hidden"
@@ -240,7 +240,7 @@ function App() {
                 variants={stagger}
                 className="flex flex-col items-center text-center relative bg-background px-4"
               >
-                <div className="w-16 h-16 rounded-full bg-primary text-primary-foreground flex items-center justify-center mb-6 shadow-lg shadow-primary/20 font-bold text-xl ring-8 ring-background">
+                <div className="w-16 h-16 rounded-full bg-[#3daa9a] text-white flex items-center justify-center mb-6 shadow-lg shadow-[#3daa9a]/30 font-bold text-xl ring-8 ring-background">
                   2
                 </div>
                 <h3 className="text-xl font-bold mb-3">Select Impacted Tests</h3>
@@ -316,9 +316,9 @@ function App() {
               </Card>
 
               <Card className="bg-foreground border-muted-foreground/20 text-background relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>
+                <div className="absolute top-0 left-0 w-1 h-full bg-[#3daa9a]"></div>
                 <CardContent className="p-8">
-                  <h3 className="text-xl font-bold mb-3 text-primary">TestSquad</h3>
+                  <h3 className="text-xl font-bold mb-3 text-[#3daa9a]">TestSquad</h3>
                   <p className="text-muted-foreground/70 mb-4">
                     "Run what changed based on the AST."
                   </p>
@@ -358,12 +358,12 @@ function App() {
                     <ArrowRight strokeWidth={1} />
                   </div>
                   <div>
-                    <div className="text-4xl font-extrabold text-primary mb-1">42</div>
-                    <div className="text-sm text-primary/80 font-medium uppercase tracking-wider">TestSquad</div>
+                    <div className="text-4xl font-extrabold text-[#3daa9a] mb-1">42</div>
+                    <div className="text-sm font-medium uppercase tracking-wider" style={{color:'#3daa9a99'}}>TestSquad</div>
                   </div>
                 </div>
                 
-                <p className="text-sm text-muted-foreground italic border-l-2 border-border pl-4">
+                <p className="text-sm text-muted-foreground italic border-l-2 border-[#3daa9a]/50 pl-4">
                   "Coming soon: A detailed technical teardown of our open-source validation results."
                 </p>
               </motion.div>
@@ -375,8 +375,8 @@ function App() {
                 transition={{ duration: 0.6 }}
                 className="bg-card border border-border rounded-2xl p-8 shadow-xl relative"
               >
-                <div className="absolute -top-4 -right-4 w-24 h-24 bg-primary/10 rounded-full blur-xl"></div>
-                <div className="absolute -bottom-8 -left-8 w-32 h-32 bg-blue-500/10 rounded-full blur-xl"></div>
+                <div className="absolute -top-4 -right-4 w-24 h-24 bg-[#3daa9a]/15 rounded-full blur-xl"></div>
+                <div className="absolute -bottom-8 -left-8 w-32 h-32 bg-primary/10 rounded-full blur-xl"></div>
                 
                 <div className="flex flex-col gap-6 relative z-10">
                   <div className="bg-muted/50 p-6 rounded-xl border border-border/50">
@@ -394,7 +394,7 @@ function App() {
                   
                   <div className="bg-muted/50 p-6 rounded-xl border border-border/50">
                     <div className="flex items-center gap-4 mb-4">
-                      <div className="w-10 h-10 rounded-full bg-blue-500/20 text-blue-600 flex items-center justify-center font-bold">SL</div>
+                      <div className="w-10 h-10 rounded-full bg-[#3daa9a]/20 text-[#3daa9a] flex items-center justify-center font-bold">SL</div>
                       <div>
                         <div className="font-bold text-foreground">Staff Software Engineer</div>
                         <div className="text-xs text-muted-foreground">Fintech Startup</div>
@@ -411,8 +411,8 @@ function App() {
         </section>
 
         {/* Pricing / CTA Section */}
-        <section id="early-access-form" className="py-32 bg-primary/5 relative overflow-hidden">
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-3xl h-[300px] bg-primary/20 blur-[100px] rounded-full pointer-events-none"></div>
+        <section id="early-access-form" className="py-32 bg-gradient-to-br from-primary/5 via-background to-[#3daa9a]/5 relative overflow-hidden">
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-3xl h-[300px] bg-gradient-to-r from-primary/15 to-[#3daa9a]/15 blur-[100px] rounded-full pointer-events-none"></div>
           
           <div className="max-w-3xl mx-auto px-6 relative z-10">
             <motion.div 
@@ -426,7 +426,7 @@ function App() {
               <p className="text-lg text-muted-foreground mb-6">
                 Simple per-seat pricing starting at <span className="font-bold text-foreground">$29/user/month</span>. No surprises. Cancel anytime.
               </p>
-              <p className="text-sm font-medium text-primary">
+              <p className="text-sm font-medium" style={{color:'#3daa9a'}}>
                 Join the private beta today to lock in early pricing.
               </p>
             </motion.div>
