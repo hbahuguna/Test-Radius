@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { ChevronRight, TerminalSquare, AlertCircle, ArrowRight, Bug, Zap, Fingerprint, Layers, CheckCircle2, ShieldCheck, Mail } from "lucide-react";
+import { ChevronRight, TerminalSquare, AlertCircle, ArrowRight, Bug, Fingerprint, Layers, CheckCircle2, ShieldCheck, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { TestSquadLogo } from "@/components/TestSquadLogo";
 
 function App() {
   const scrollToForm = () => {
@@ -31,12 +32,7 @@ function App() {
       {/* Navigation */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-md border-b border-border/40">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2 font-bold text-lg tracking-tight">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-primary-foreground">
-              <Zap size={18} strokeWidth={2.5} />
-            </div>
-            TestSquad
-          </div>
+          <TestSquadLogo height={32} />
           <div className="flex items-center gap-4">
             <Button variant="ghost" className="hidden sm:inline-flex" onClick={scrollToForm}>
               Join Pilot
@@ -454,12 +450,7 @@ function App() {
       {/* Footer */}
       <footer className="bg-background border-t border-border py-12">
         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
-          <div className="flex items-center gap-2 font-bold text-lg text-foreground/80">
-            <div className="w-6 h-6 rounded bg-muted flex items-center justify-center text-muted-foreground">
-              <Zap size={14} strokeWidth={2.5} />
-            </div>
-            TestSquad
-          </div>
+          <TestSquadLogo height={28} />
           
           <div className="text-sm text-muted-foreground">
             &copy; 2025 TestSquad. All rights reserved.
