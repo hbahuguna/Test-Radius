@@ -79,46 +79,48 @@
   --background: 240 20% 99%;
   --foreground: 240 10% 4%;
 
-  --border: 240 6% 90%;
-  --input: 240 6% 90%;
-  --ring: 250 84% 54%;
+  --border: 220 14% 89%;
+  --input: 220 14% 89%;
+  --ring: 227 68% 28%;
 
   --card: 0 0% 100%;
-  --card-foreground: 240 10% 4%;
-  --card-border: 240 6% 90%;
+  --card-foreground: 227 30% 10%;
+  --card-border: 220 14% 89%;
 
   --sidebar: 0 0% 100%;
-  --sidebar-foreground: 240 10% 4%;
-  --sidebar-border: 240 6% 90%;
-  --sidebar-primary: 250 84% 54%;
+  --sidebar-foreground: 227 30% 10%;
+  --sidebar-border: 220 14% 89%;
+  --sidebar-primary: 227 68% 28%;
   --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 240 5% 96%;
-  --sidebar-accent-foreground: 240 10% 4%;
-  --sidebar-ring: 250 84% 54%;
+  --sidebar-accent: 220 14% 96%;
+  --sidebar-accent-foreground: 227 30% 10%;
+  --sidebar-ring: 227 68% 28%;
 
   --popover: 0 0% 100%;
-  --popover-foreground: 240 10% 4%;
-  --popover-border: 240 6% 90%;
+  --popover-foreground: 227 30% 10%;
+  --popover-border: 220 14% 89%;
 
-  --primary: 250 84% 54%;
+  /* Logo blue #172c79 */
+  --primary: 227 68% 28%;
   --primary-foreground: 0 0% 100%;
 
-  --secondary: 240 5% 96%;
-  --secondary-foreground: 240 10% 4%;
+  --secondary: 220 14% 96%;
+  --secondary-foreground: 227 30% 10%;
 
-  --muted: 240 5% 96%;
-  --muted-foreground: 240 4% 46%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 220 10% 46%;
 
-  --accent: 240 5% 96%;
-  --accent-foreground: 240 10% 4%;
+  --accent: 220 14% 96%;
+  --accent-foreground: 227 30% 10%;
 
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
 
-  --chart-1: 250 84% 54%;
-  --chart-2: 173 58% 39%;
-  --chart-3: 197 37% 24%;
-  --chart-4: 43 74% 66%;
+  /* Chart palette aligned to logo colors */
+  --chart-1: 227 68% 28%;
+  --chart-2: 172 47% 45%;
+  --chart-3: 227 68% 50%;
+  --chart-4: 172 47% 62%;
   --chart-5: 27 87% 67%;
 
   --app-font-sans: 'Inter', sans-serif;
@@ -161,7 +163,7 @@
 
   --border: 240 10% 15%;
   --input: 240 10% 15%;
-  --ring: 250 84% 64%;
+  --ring: 227 68% 58%;
 
   --card: 240 10% 6%;
   --card-foreground: 0 0% 98%;
@@ -170,17 +172,18 @@
   --sidebar: 240 10% 6%;
   --sidebar-foreground: 0 0% 98%;
   --sidebar-border: 240 10% 15%;
-  --sidebar-primary: 250 84% 64%;
+  --sidebar-primary: 227 68% 58%;
   --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 240 10% 12%;
   --sidebar-accent-foreground: 0 0% 98%;
-  --sidebar-ring: 250 84% 64%;
+  --sidebar-ring: 227 68% 58%;
 
   --popover: 240 10% 6%;
   --popover-foreground: 0 0% 98%;
   --popover-border: 240 10% 15%;
 
-  --primary: 250 84% 64%;
+  /* Lighter logo blue for dark backgrounds */
+  --primary: 227 68% 58%;
   --primary-foreground: 0 0% 100%;
 
   --secondary: 240 10% 15%;
@@ -195,11 +198,11 @@
   --destructive: 0 62% 30%;
   --destructive-foreground: 0 0% 98%;
 
-  --chart-1: 250 84% 64%;
-  --chart-2: 160 60% 45%;
-  --chart-3: 30 80% 55%;
-  --chart-4: 280 65% 60%;
-  --chart-5: 340 75% 55%;
+  --chart-1: 227 68% 58%;
+  --chart-2: 172 47% 55%;
+  --chart-3: 227 68% 72%;
+  --chart-4: 172 47% 68%;
+  --chart-5: 27 87% 67%;
   
   --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.5);
   --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.5);

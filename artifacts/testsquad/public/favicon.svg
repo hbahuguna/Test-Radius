@@ -1,18 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <defs>
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=Righteous&amp;display=swap');
-    </style>
-  </defs>
-  <text
-    x="4"
-    y="80"
-    font-family="Righteous, 'Trebuchet MS', Arial, sans-serif"
-    font-weight="700"
-    font-size="88"
-    letter-spacing="-15"
-    fill="none"
-  >
-    <tspan fill="#172c79">t</tspan><tspan fill="#3daa9a">S</tspan>
-  </text>
+  <rect width="100" height="100" rx="14" fill="#172c79"/>
+  <text x="6" y="76" font-family="'Arial Black', Arial, Helvetica, sans-serif" font-weight="900" font-size="70" fill="white">t</text>
+  <text x="46" y="76" font-family="'Arial Black', Arial, Helvetica, sans-serif" font-weight="900" font-size="70" fill="#3daa9a">S</text>
 </svg>
