@@ -479,20 +479,17 @@ function EarlyAccessForm() {
     setStatus('submitting');
 
     try {
+      const formData = new FormData();
+      formData.append("access_key", "ebd48112-7ad0-489a-80d0-5b3d0f77c336");
+      formData.append("subject", "New Early Access Request — TestSquad");
+      formData.append("from_name", "TestSquad Landing Page");
+      formData.append("email", email);
+      formData.append("company", company || "(not provided)");
+      formData.append("role", role || "(not provided)");
+
       const response = await fetch('https://api.web3forms.com/submit', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          access_key: import.meta.env.VITE_WEB3FORMS_KEY,
-          subject: 'New Early Access Request — TestSquad',
-          from_name: 'TestSquad Landing Page',
-          email,
-          company: company || '(not provided)',
-          role: role || '(not provided)',
-        })
+        body: formData
       });
 
       const data = await response.json();
