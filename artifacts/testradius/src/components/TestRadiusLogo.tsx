@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 
-interface TestSquadLogoProps {
+interface TestRadiusLogoProps {
   className?: string;
   height?: number;
 }
@@ -10,7 +10,10 @@ const TEAL = "#3daa9a";
 const FONT = "'Righteous', 'Trebuchet MS', sans-serif";
 const TRACKING = "-0.174em";
 
-export function TestSquadLogo({ className = "", height = 36 }: TestSquadLogoProps) {
+export function TestRadiusLogo({
+  className = "",
+  height = 36,
+}: TestSquadLogoProps) {
   const monoSize = height;
   const wordSize = Math.round(height * 0.64);
   const gap = Math.round(height * 0.2);
@@ -26,18 +29,23 @@ export function TestSquadLogo({ className = "", height = 36 }: TestSquadLogoProp
   return (
     <div
       className={className}
-      style={{ display: "flex", alignItems: "baseline", gap: `${gap}px`, userSelect: "none" }}
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        gap: `${gap}px`,
+        userSelect: "none",
+      }}
       aria-label="TestRadius"
       role="img"
     >
       <span style={{ ...shared, fontSize: `${monoSize}px` }}>
         <span style={{ color: BLUE }}>t</span>
-        <span style={{ color: TEAL }}>S</span>
+        <span style={{ color: TEAL }}>R</span>
       </span>
 
       <span style={{ ...shared, fontSize: `${wordSize}px` }}>
         <span style={{ color: BLUE }}>test</span>
-        <span style={{ color: TEAL }}>Squad</span>
+        <span style={{ color: TEAL }}>Radius</span>
       </span>
     </div>
   );
