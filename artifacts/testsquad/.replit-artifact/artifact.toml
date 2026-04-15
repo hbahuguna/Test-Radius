@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "TestSquad Landing Page"
+title = "TestRadius Landing Page"
 version = "1.0.0"
 id = "artifacts/testsquad"
 router = "path"

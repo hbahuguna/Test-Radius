@@ -27,7 +27,7 @@ export function TestSquadLogo({ className = "", height = 36 }: TestSquadLogoProp
     <div
       className={className}
       style={{ display: "flex", alignItems: "baseline", gap: `${gap}px`, userSelect: "none" }}
-      aria-label="TestSquad"
+      aria-label="TestRadius"
       role="img"
     >
       <span style={{ ...shared, fontSize: `${monoSize}px` }}>

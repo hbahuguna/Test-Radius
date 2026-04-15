@@ -72,7 +72,7 @@ function App() {
               </motion.h1>
               
               <motion.p variants={fadeInUp} className="text-lg sm:text-xl text-muted-foreground mb-8 leading-relaxed max-w-xl">
-                TestSquad runs only the tests impacted by your code changes – so you stop debugging false failures and start shipping faster.
+                TestRadius runs only the tests impacted by your code changes – so you stop debugging false failures and start shipping faster.
               </motion.p>
               
               <motion.div variants={fadeInUp} className="flex flex-col sm:flex-row gap-4">
@@ -210,7 +210,7 @@ function App() {
             >
               <h2 className="text-3xl sm:text-4xl font-bold mb-6">Surgical precision, zero magic.</h2>
               <p className="text-lg text-muted-foreground">
-                TestSquad is a deterministic decision layer. We analyze your code and tell your CI exactly what to run. Explainable, lightweight, and fast.
+                TestRadius is a deterministic decision layer. We analyze your code and tell your CI exactly what to run. Explainable, lightweight, and fast.
               </p>
             </motion.div>
 
@@ -280,7 +280,7 @@ function App() {
             >
               <h2 className="text-3xl sm:text-4xl font-bold mb-6 text-background">Why not just use...</h2>
               <p className="text-lg text-muted-foreground/80">
-                Other approaches sound good until you actually try to deploy them to a 50-engineer team. TestSquad is built for reality.
+                Other approaches sound good until you actually try to deploy them to a 50-engineer team. TestRadius is built for reality.
               </p>
             </motion.div>
 
@@ -318,7 +318,7 @@ function App() {
               <Card className="bg-foreground border-muted-foreground/20 text-background relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-1 h-full bg-[#3daa9a]"></div>
                 <CardContent className="p-8">
-                  <h3 className="text-xl font-bold mb-3 text-[#3daa9a]">TestSquad</h3>
+                  <h3 className="text-xl font-bold mb-3 text-[#3daa9a]">TestRadius</h3>
                   <p className="text-muted-foreground/70 mb-4">
                     "Run what changed based on the AST."
                   </p>
@@ -346,7 +346,7 @@ function App() {
                 </div>
                 <h2 className="text-3xl sm:text-4xl font-bold mb-6">We tested it on massive codebases.</h2>
                 <p className="text-lg text-muted-foreground mb-8">
-                  In a real-world validation on a mature Django monolith, TestSquad safely reduced the required test runs by over 94% without missing a single relevant failure.
+                  In a real-world validation on a mature Django monolith, TestRadius safely reduced the required test runs by over 94% without missing a single relevant failure.
                 </p>
                 
                 <div className="flex gap-8 mb-8">
@@ -359,7 +359,7 @@ function App() {
                   </div>
                   <div>
                     <div className="text-4xl font-extrabold text-[#3daa9a] mb-1">42</div>
-                    <div className="text-sm font-medium uppercase tracking-wider" style={{color:'#3daa9a99'}}>TestSquad</div>
+                    <div className="text-sm font-medium uppercase tracking-wider" style={{color:'#3daa9a99'}}>TestRadius</div>
                   </div>
                 </div>
                 
@@ -388,7 +388,7 @@ function App() {
                       </div>
                     </div>
                     <p className="text-foreground/80 italic">
-                      "We were about to hire a dedicated devops engineer just to manage our test flake. TestSquad gave us our CI back. The explainability is what sold my staff engineers."
+                      "We were about to hire a dedicated devops engineer just to manage our test flake. TestRadius gave us our CI back. The explainability is what sold my staff engineers."
                     </p>
                   </div>
                   
@@ -453,7 +453,7 @@ function App() {
           <TestSquadLogo height={28} />
           
           <div className="text-sm text-muted-foreground">
-            &copy; 2025 TestSquad. All rights reserved.
+            &copy; 2025 TestRadius. All rights reserved.
           </div>
           
           <div className="flex gap-6 text-sm font-medium text-muted-foreground">
@@ -482,8 +482,8 @@ function EarlyAccessForm() {
     try {
       const formData = new FormData();
       formData.append("access_key", "ebd48112-7ad0-489a-80d0-5b3d0f77c336");
-      formData.append("subject", "New Early Access Request — TestSquad");
-      formData.append("from_name", "TestSquad Landing Page");
+      formData.append("subject", "New Early Access Request — TestRadius");
+      formData.append("from_name", "TestRadius Landing Page");
       formData.append("email", email);
       formData.append("company", company || "(not provided)");
       formData.append("role", role || "(not provided)");
@@ -519,7 +519,7 @@ function EarlyAccessForm() {
         </div>
         <h3 className="text-2xl font-bold mb-2">You're on the list.</h3>
         <p className="text-muted-foreground">
-          We'll reach out soon with access details. Thanks for your interest in TestSquad.
+          We'll reach out soon with access details. Thanks for your interest in TestRadius.
         </p>
         <Button 
           variant="outline" 
