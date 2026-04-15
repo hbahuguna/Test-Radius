@@ -3,6 +3,8 @@ modules = ["nodejs-24"]
 [deployment]
 router = "application"
 deploymentTarget = "autoscale"
+build = "PORT=3000 BASE_PATH=/ pnpm --filter @workspace/testradius build"
+static = "artifacts/testradius/dist"
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
@@ -104,9 +106,6 @@ externalPort = 3000
 [[ports]]
 localPort = 19144
 externalPort = 3001
-
-[nix]
-packages = ["lsof"]
 
 # [[ports]]
 # localPort = 8081
