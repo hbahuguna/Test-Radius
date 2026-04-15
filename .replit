@@ -58,11 +58,11 @@ mode = "parallel"
 
 [workflows.workflow.metadata]
 outputType = "webview"
-artifactId = "artifacts/testsquad"
+artifactId = "artifacts/testradius"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm --filter @workspace/testsquad run dev"
+args = "pnpm --filter @workspace/testradius run dev"
 cwd = "./artifacts/testradius"
 waitForPort = 19143
 router = "path"

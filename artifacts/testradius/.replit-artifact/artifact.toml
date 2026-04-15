@@ -2,7 +2,7 @@ kind = "web"
 previewPath = "/"
 title = "TestRadius Landing Page"
 version = "1.0.0"
-id = "artifacts/testsquad"
+id = "artifacts/testradius"
 router = "path"
 
 [[integratedSkills]]
@@ -15,11 +15,11 @@ paths = [ "/" ]
 localPort = 19143
 
 [services.development]
-run = "pnpm --filter @workspace/testsquad run dev"
+run = "pnpm --filter @workspace/testradius run dev"
 
 [services.production]
-build = [ "pnpm", "--filter", "@workspace/testsquad", "run", "build" ]
-publicDir = "artifacts/testsquad/dist/public"
+build = [ "pnpm", "--filter", "@workspace/testradius", "run", "build" ]
+publicDir = "artifacts/testradius/dist/public"
 serve = "static"
 
 [[services.production.rewrites]]
