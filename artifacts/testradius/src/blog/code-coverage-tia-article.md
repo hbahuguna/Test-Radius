@@ -1,8 +1,8 @@
----
 title: Precision Test Selection with Per-Test Code Coverage
 date: 2026-05-23
 description: How TestRadius turns coverage data into an impact analysis engine that selects the right tests — not all of them.
 imageUrl: /blog-assets/code-coverage-tia.png
+
 ---
 
 Every CI pipeline faces the same tension: run all tests and wait 20+ minutes, or guess which subset matters and risk shipping regressions.
@@ -25,6 +25,8 @@ pytest --cov (per-test)  →  AST Symbol Resolution  →  Neo4j Graph Store
 ```
 
 ### Layer 1: Per-Test Coverage Collection (Pytest Plugin)
+
+https://www.youtube.com/watch?v=KcEeorf8dNQ
 
 Instead of running `pytest --cov` and getting one aggregate coverage blob, we hook into pytest's runtime lifecycle with `PerTestCoveragePlugin`:
 
