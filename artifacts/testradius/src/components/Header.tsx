@@ -20,6 +20,11 @@ export function Header({ scrollToForm }: HeaderProps) {
               Blog
             </Button>
           </Link>
+          <Link href="/jobs">
+            <Button variant="ghost" className="hidden sm:inline-flex">
+              Careers
+            </Button>
+          </Link>
           <Button
             variant="ghost"
             className="hidden sm:inline-flex"

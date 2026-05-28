@@ -1,4 +1,5 @@
 import React from "react";
+import { Link } from "wouter";
 import { TestRadiusLogo } from "@/components/TestRadiusLogo";
 
 export function Footer() {
@@ -12,12 +13,9 @@ export function Footer() {
         </div>
 
         <div className="flex gap-6 text-sm font-medium text-muted-foreground">
-          <a
-            href="mailto:hello@testradius.dev"
-            className="hover:text-primary transition-colors"
-          >
-            About
-          </a>
+          <Link href="/jobs" className="hover:text-primary transition-colors">
+            Careers
+          </Link>
           <a
             href="mailto:hello@testradius.dev"
             className="hover:text-primary transition-colors"

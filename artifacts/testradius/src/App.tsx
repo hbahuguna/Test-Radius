@@ -3,6 +3,7 @@ import { Route, Switch } from "wouter";
 import { Home } from "./pages/Home";
 import { BlogIndex } from "./pages/BlogIndex";
 import { BlogPost } from "./pages/BlogPost";
+import { Careers } from "./pages/Careers";
 
 function App() {
   return (
@@ -15,6 +16,12 @@ function App() {
       </Route>
       <Route path="/blog/:slug">
         <BlogPost />
+      </Route>
+      <Route path="/jobs">
+        <Careers />
+      </Route>
+      <Route path="/careers">
+        <Careers />
       </Route>
       {/* Add a 404 Not Found route if desired */}
       <Route>
