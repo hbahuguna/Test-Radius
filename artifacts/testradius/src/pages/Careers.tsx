@@ -338,8 +338,17 @@ export function Careers() {
                       </div>
 
                       <div className="space-y-2">
-                        <Label htmlFor="resume">Resume (PDF)</Label>
-                        <Input id="resume" name="resume" type="file" accept=".pdf,.doc,.docx" required className="cursor-pointer" />
+                        <Label htmlFor="resume">Link to Resume</Label>
+                        <Input 
+                          id="resume" 
+                          name="resume" 
+                          type="url" 
+                          placeholder="Google Drive, Dropbox, or personal site link..." 
+                          required 
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Please ensure the link is publicly accessible.
+                        </p>
                       </div>
 
                       <Button
