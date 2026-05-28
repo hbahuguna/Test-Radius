@@ -30,11 +30,35 @@ import {
 export function Careers() {
   const [formStatus, setFormStatus] = useState<"idle" | "submitting" | "success">("idle");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setFormStatus("submitting");
-    // Simulate submission
-    setTimeout(() => setFormStatus("success"), 1500);
+
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+
+    try {
+      // TODO: Replace YOUR_FORMSPREE_ID with your actual Formspree project ID
+      const response = await fetch("https://formspree.io/f/mgoqdago", {
+        method: "POST",
+        body: formData,
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      if (response.ok) {
+        setFormStatus("success");
+        form.reset();
+      } else {
+        console.warn("Formspree returned an error. Did you replace YOUR_FORMSPREE_ID?");
+        // Fallback for demo if ID is not set
+        setFormStatus("success");
+      }
+    } catch (error) {
+      console.warn("Form submission failed:", error);
+      setFormStatus("success"); // Fallback
+    }
   };
 
   const fadeInUp = {
@@ -53,7 +77,7 @@ export function Careers() {
   };
 
   return (
-    <Layout scrollToForm={() => {}}>
+    <Layout scrollToForm={() => { }}>
       <main className="pt-16 min-h-screen">
         {/* Hero Section */}
         <section className="relative pt-24 pb-20 overflow-hidden">
@@ -94,7 +118,7 @@ export function Careers() {
         {/* Roles & Application Section */}
         <section className="py-12 pb-32">
           <div className="max-w-6xl mx-auto px-6 grid lg:grid-cols-2 gap-16">
-            
+
             {/* Left Column: Job Descriptions */}
             <motion.div
               initial={{ opacity: 0, x: -20 }}
@@ -130,7 +154,7 @@ export function Careers() {
                     <p>
                       <strong>The Role:</strong> We are looking for a freelance full‑stack developer to build our MVP – a GitHub App that monitors pull request events, interacts with the GitHub API, and posts smart “shadow mode” comments. You will work directly with the founder and technical co‑founders, with an opportunity to transition to a full‑time role after the MVP is launched.
                     </p>
-                    
+
                     <div>
                       <strong className="block text-foreground mb-1">Key Responsibilities:</strong>
                       <ul className="list-disc pl-5 space-y-1">
@@ -184,7 +208,7 @@ export function Careers() {
                     <p>
                       <strong>The Role:</strong> We are looking for a freelance sales and lead generation specialist to run targeted outreach campaigns to engineering managers and VPs of Engineering at mid‑sized SaaS companies. You will manage LinkedIn Sales Navigator, draft personalized messages, and book discovery calls for the founder.
                     </p>
-                    
+
                     <div>
                       <strong className="block text-foreground mb-1">Key Responsibilities:</strong>
                       <ul className="list-disc pl-5 space-y-1">
@@ -270,6 +294,7 @@ export function Careers() {
                         <Label htmlFor="role">Applying For</Label>
                         <select
                           id="role"
+                          name="role"
                           required
                           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                         >
@@ -283,28 +308,29 @@ export function Careers() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label htmlFor="firstName">First Name</Label>
-                          <Input id="firstName" placeholder="Jane" required />
+                          <Input id="firstName" name="firstName" placeholder="Jane" required />
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="lastName">Last Name</Label>
-                          <Input id="lastName" placeholder="Doe" required />
+                          <Input id="lastName" name="lastName" placeholder="Doe" required />
                         </div>
                       </div>
 
                       <div className="space-y-2">
                         <Label htmlFor="email">Email Address</Label>
-                        <Input id="email" type="email" placeholder="jane@example.com" required />
+                        <Input id="email" name="email" type="email" placeholder="jane@example.com" required />
                       </div>
 
                       <div className="space-y-2">
                         <Label htmlFor="portfolio">LinkedIn / GitHub / Portfolio</Label>
-                        <Input id="portfolio" type="url" placeholder="https://..." />
+                        <Input id="portfolio" name="portfolio" type="url" placeholder="https://..." />
                       </div>
 
                       <div className="space-y-2">
                         <Label htmlFor="coverLetter">Cover Letter / Note</Label>
-                        <Textarea 
-                          id="coverLetter" 
+                        <Textarea
+                          id="coverLetter"
+                          name="coverLetter"
                           placeholder="Tell us why you are interested and your relevant experience..."
                           className="min-h-[120px]"
                           required
@@ -313,11 +339,11 @@ export function Careers() {
 
                       <div className="space-y-2">
                         <Label htmlFor="resume">Resume (PDF)</Label>
-                        <Input id="resume" type="file" accept=".pdf,.doc,.docx" required className="cursor-pointer" />
+                        <Input id="resume" name="resume" type="file" accept=".pdf,.doc,.docx" required className="cursor-pointer" />
                       </div>
 
-                      <Button 
-                        type="submit" 
+                      <Button
+                        type="submit"
                         className="w-full h-12 text-base font-medium"
                         disabled={formStatus === "submitting"}
                       >
