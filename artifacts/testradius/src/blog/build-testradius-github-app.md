@@ -263,3 +263,5 @@ The static comment is only the beginning. The next phase of TestRadius involves:
 3. **GitHub Marketplace listing** – making the app discoverable to thousands of engineering teams.
 
 The foundation is now solid. The webhook receiver is battle‑tested, the authentication flow is clean, and the ngrok tunnel gives us a production‑like debugging environment. Every engineering team that struggles with flaky tests and slow CI feedback loops is one step closer to a solution that doesn't guess — it knows.
+
+Final code for a github app that can comment on a github PR can be found here https://github.com/hbahuguna/testradius-github-app/tree/main
