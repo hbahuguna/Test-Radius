@@ -98,7 +98,7 @@ export function Careers() {
               >
                 Build the future of <br className="hidden sm:block" />
                 <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-[#3daa9a]">
-                  software quality.
+                  software testing.
                 </span>
               </motion.h1>
 
