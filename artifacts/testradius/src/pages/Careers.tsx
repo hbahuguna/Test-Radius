@@ -106,7 +106,7 @@ export function Careers() {
                 variants={fadeInUp}
                 className="text-xl text-muted-foreground mb-8 leading-relaxed max-w-2xl mx-auto"
               >
-                We help engineering teams eliminate flaky tests and slow CI by
+                We help engineering teams eliminate flaky tests and speed up deployments by
                 running only the tests impacted by each code change. Join us to
                 build the core infrastructure that will change how developers
                 ship code.
