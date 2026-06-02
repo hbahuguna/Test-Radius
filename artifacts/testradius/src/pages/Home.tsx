@@ -203,11 +203,11 @@ export function Home() {
                       <AlertCircle size={24} />
                     </div>
                     <h3 className="text-xl font-bold mb-3">
-                      Slow CI Pipelines
+                      Slow Testing Pipelines
                     </h3>
                     <p className="text-muted-foreground">
                       Developers waste hours re-running pipelines. A 30-60
-                      minute wait per PR destroys momentum and context context
+                      minute wait per PR destroys momentum and context
                       switching.
                     </p>
                   </CardContent>
