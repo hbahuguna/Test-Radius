@@ -202,9 +202,9 @@ export function Home() {
                     <div className="w-12 h-12 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 flex items-center justify-center mb-6">
                       <AlertCircle size={24} />
                     </div>
-                    <h3 className="text-xl font-bold mb-3">
+                    <h2 className="text-xl font-bold mb-3">
                       Slow CI Pipelines
-                    </h3>
+                    </h2>
                     <p className="text-muted-foreground">
                       Developers waste hours re-running pipelines. A 30-60
                       minute wait per PR destroys momentum and context context
