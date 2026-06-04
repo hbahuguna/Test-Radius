@@ -15,6 +15,11 @@ export function Header({ scrollToForm }: HeaderProps) {
           <TestRadiusLogo height={32} />
         </Link>
         <div className="flex items-center gap-4">
+          <Link href="/docs">
+            <Button variant="ghost" className="hidden sm:inline-flex">
+              Docs
+            </Button>
+          </Link>
           <Link href="/blog">
             <Button variant="ghost" className="hidden sm:inline-flex">
               Blog
