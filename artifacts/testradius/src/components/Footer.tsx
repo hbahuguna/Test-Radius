@@ -12,7 +12,7 @@ export function Footer() {
           &copy; 2025 TestRadius. All rights reserved.
         </div>
 
-        <div className="flex gap-6 text-sm font-medium text-muted-foreground">
+        <div className="flex gap-6 text-sm font-medium text-muted-foreground items-center">
           <Link href="/jobs" className="hover:text-primary transition-colors">
             Careers
           </Link>
@@ -21,6 +21,14 @@ export function Footer() {
             className="hover:text-primary transition-colors"
           >
             Contact
+          </a>
+          <a
+            href="https://zcal.co/i/suLjJzcq"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-primary transition-colors"
+          >
+            Schedule a meeting
           </a>
         </div>
       </div>
