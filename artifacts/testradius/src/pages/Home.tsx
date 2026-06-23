@@ -203,7 +203,7 @@ export function Home() {
                       <AlertCircle size={24} />
                     </div>
                     <h3 className="text-xl font-bold mb-3">
-                      Slow CI Pipelines
+                      Slow E2E Tests
                     </h3>
                     <p className="text-muted-foreground">
                       Developers waste hours re-running pipelines. A 30-60
