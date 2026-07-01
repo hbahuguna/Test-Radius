@@ -12,40 +12,63 @@ export class PricingPage {
   }
 
   getHeroHeading(): Locator {
-    return this.page.getByRole("heading", { name: /Right-sized plans for/ });
+    return this.page.getByRole("heading", {
+      name: /pricing for teams of every size/,
+    });
   }
 
   getTierCard(tierName: string): Locator {
-    return this.page.getByRole("heading", { name: tierName }).locator("..").locator("..").locator("..");
-  }
-
-  getTierCardElement(tierName: string): Locator {
-    return this.page.locator("h3:has-text('" + tierName + "')").first().locator("..").locator("..").locator("..");
+    return this.page.locator(`[data-tier="${tierName.toLowerCase()}"]`);
   }
 
   getTierPrice(tierName: string): Locator {
-    return this.page.locator("h3:has-text('" + tierName + "')").first().locator("..").locator("..").locator("..").locator("span.font-extrabold");
+    return this.getTierCard(tierName).locator("span.font-extrabold").first();
   }
 
   getMostPopularBadge(): Locator {
     return this.page.getByText("Most Popular");
   }
 
-  getTeamCard(): Locator {
-    return this.page.locator("h3:has-text('Team')").first().locator("..").locator("..").locator("..");
+  getCtaButton(tierName: string): Locator {
+    return this.getTierCard(tierName).getByRole("button");
   }
 
-  getCtaButton(tierName: string): Locator {
-    const card = this.getTierCardElement(tierName);
-    return card.getByRole("button");
+  getBillingToggle(): Locator {
+    return this.page.locator('button[role="switch"]');
+  }
+
+  getSaveBadge(): Locator {
+    return this.page.getByText("Save 17%");
+  }
+
+  getComparisonTable(): Locator {
+    return this.page.locator("table");
+  }
+
+  getComparisonRow(feature: string): Locator {
+    return this.page.getByRole("cell", { name: feature });
+  }
+
+  getCalculatorSlider(): Locator {
+    return this.page.locator('[role="slider"]');
+  }
+
+  getCalculatorTierRow(tierName: string): Locator {
+    return this.page.locator(
+      `[data-calculator-tier="${tierName.toLowerCase()}"]`,
+    );
+  }
+
+  getBestValueBadge(): Locator {
+    return this.page.getByText("Best Value");
+  }
+
+  getDeveloperCount(): Locator {
+    return this.page.locator("text=Developer count:");
   }
 
   getFaqAccordionTrigger(question: string): Locator {
     return this.page.getByRole("button", { name: question });
-  }
-
-  getFaqContent(): Locator {
-    return this.page.locator('[data-state="open"] [data-radix-collection-item]').first();
   }
 
   getGuaranteeBadge(): Locator {

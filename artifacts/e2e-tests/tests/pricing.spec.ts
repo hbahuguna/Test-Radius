@@ -9,37 +9,50 @@ test.describe("Pricing Page", () => {
     await expect(pricing.getHeroHeading()).toBeVisible();
   });
 
-  test("all three tier cards are visible with correct names", async ({ page }) => {
+  test("all five tier cards are visible with correct names", async ({
+    page,
+  }) => {
     const pricing = new PricingPage(page);
     await pricing.goto();
-    await expect(page.getByText("Shadow Mode", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Team", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Enterprise", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("Free", { exact: true }).first()).toBeVisible();
+    await expect(
+      page.getByText("Starter", { exact: true }).first(),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Growth", { exact: true }).first(),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Scale", { exact: true }).first(),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Enterprise", { exact: true }).first(),
+    ).toBeVisible();
   });
 
-  test("team card displays correct monthly price", async ({ page }) => {
+  test("growth card displays correct monthly price", async ({ page }) => {
     const pricing = new PricingPage(page);
     await pricing.goto();
-    await expect(page.getByText("$29", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("per seat / month")).toBeVisible();
+    await expect(page.getByText("$25", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("/dev / month").first()).toBeVisible();
   });
 
-  test("shadow mode shows free forever", async ({ page }) => {
+  test("free shows $0 forever", async ({ page }) => {
     const pricing = new PricingPage(page);
     await pricing.goto();
-    await expect(page.getByRole("heading", { name: "Shadow Mode" })).toBeVisible();
-    await expect(page.getByText("$0")).toBeVisible();
-    await expect(page.getByText("forever")).toBeVisible();
+    await expect(pricing.getTierCard("Free")).toBeVisible();
+    await expect(pricing.getTierPrice("Free")).toHaveText("$0");
   });
 
-  test("enterprise shows custom pricing", async ({ page }) => {
+  test("enterprise shows from $1,499 pricing", async ({ page }) => {
     const pricing = new PricingPage(page);
     await pricing.goto();
-    await expect(page.getByText("Enterprise", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Custom", { exact: true }).first()).toBeVisible();
+    await expect(
+      page.getByText("Enterprise", { exact: true }).first(),
+    ).toBeVisible();
+    await expect(pricing.getTierPrice("Enterprise")).toHaveText("From $1,499");
   });
 
-  test("most popular badge is visible on team card", async ({ page }) => {
+  test("most popular badge is visible on growth card", async ({ page }) => {
     const pricing = new PricingPage(page);
     await pricing.goto();
     await expect(pricing.getMostPopularBadge()).toBeVisible();
@@ -51,16 +64,16 @@ test.describe("Pricing Page", () => {
     await expect(pricing.getGuaranteeBadge()).toBeVisible();
   });
 
-  test("team card has 5 seat minimum text", async ({ page }) => {
+  test("growth card has developer range text", async ({ page }) => {
     const pricing = new PricingPage(page);
     await pricing.goto();
-    await expect(page.getByText("5 seat minimum")).toBeVisible();
+    await expect(page.getByText("6–25 developers").first()).toBeVisible();
   });
 
-  test("headline mentions plans for every team", async ({ page }) => {
+  test("headline mentions teams of every size", async ({ page }) => {
     const pricing = new PricingPage(page);
     await pricing.goto();
-    await expect(pricing.getHeroHeading()).toContainText("every team");
+    await expect(pricing.getHeroHeading()).toHaveText(/teams of every size/);
   });
 
   test("pricing accessible from header navigation", async ({ page }) => {
@@ -76,56 +89,159 @@ test.describe("Pricing Page", () => {
     await expect(page).toHaveURL("/");
   });
 
-  test("team card scrolls to early access form on button click", async ({ page }) => {
+  test("growth card scrolls to early access form on button click", async ({
+    page,
+  }) => {
     const pricing = new PricingPage(page);
     await pricing.goto();
-    await page.getByRole("button", { name: "Start Free Trial" }).click();
+    await page.getByRole("button", { name: "Start Trial" }).first().click();
     await expect(page.locator("#early-access-form")).toBeInViewport();
   });
 
-  test("shadow mode card has get started free button", async ({ page }) => {
+  test("free card has get started free button", async ({ page }) => {
     const pricing = new PricingPage(page);
     await pricing.goto();
-    await expect(page.getByRole("button", { name: "Get Started Free" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Get Started Free" }),
+    ).toBeVisible();
   });
 
-  test("team card has start free trial button", async ({ page }) => {
+  test("starter and growth cards have start trial button", async ({
+    page,
+  }) => {
     const pricing = new PricingPage(page);
     await pricing.goto();
-    await expect(page.getByRole("button", { name: "Start Free Trial" })).toBeVisible();
+    const buttons = page.getByRole("button", { name: "Start Trial" });
+    await expect(buttons).toHaveCount(3);
   });
 
   test("enterprise card has contact sales button", async ({ page }) => {
     const pricing = new PricingPage(page);
     await pricing.goto();
-    await expect(page.getByRole("button", { name: "Contact Sales" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Contact Sales" }),
+    ).toBeVisible();
   });
 
   test("faq accordion expands and collapses", async ({ page }) => {
     const pricing = new PricingPage(page);
     await pricing.goto();
     await expect(page.getByText("Frequently asked questions")).toBeVisible();
-    await pricing.getFaqAccordionTrigger("Why a 5-seat minimum").click();
-    await expect(page.getByText(/We serve engineering teams/)).toBeVisible();
-    await pricing.getFaqAccordionTrigger("Why a 5-seat minimum").click();
-    await expect(page.getByText(/We serve engineering teams/)).not.toBeVisible();
+    await pricing
+      .getFaqAccordionTrigger("Can I start with the Free plan")
+      .click();
+    await expect(
+      page.getByText(/The Free plan is yours forever/),
+    ).toBeVisible();
+    await pricing
+      .getFaqAccordionTrigger("Can I start with the Free plan")
+      .click();
+    await expect(
+      page.getByText(/The Free plan is yours forever/),
+    ).not.toBeVisible();
   });
 
   test("all pricing feature checkmarks are visible", async ({ page }) => {
     const pricing = new PricingPage(page);
     await pricing.goto();
-    await expect(page.getByText("Free shadow-mode analysis")).toBeVisible();
-    await expect(page.getByText("5 analyses per month")).toBeVisible();
-    await expect(page.getByText("Unlimited shadow-mode analyses")).toBeVisible();
-    await expect(page.getByText("SSO & SAML")).toBeVisible();
-    await expect(page.getByText("Dedicated account manager")).toBeVisible();
+    await expect(
+      page.getByText("Full shadow mode analysis", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Up to 5 developers", { exact: true }).first(),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Explainability dashboard"),
+    ).toBeVisible();
+    await expect(page.getByText("Advanced analytics")).toBeVisible();
+    await expect(
+      page.getByText("Dedicated account manager"),
+    ).toBeVisible();
   });
 
   test("layout renders early access form at bottom", async ({ page }) => {
     const pricing = new PricingPage(page);
     await pricing.goto();
     await expect(page.locator("#early-access-form")).toBeVisible();
-    const emailInput = page.locator("#early-access-form input[type='email']");
+    const emailInput = page.locator(
+      "#early-access-form input[type='email']",
+    );
     await expect(emailInput).toBeVisible();
+  });
+
+  test("billing toggle shows annual prices when switched on", async ({
+    page,
+  }) => {
+    const pricing = new PricingPage(page);
+    await pricing.goto();
+    await expect(pricing.getTierPrice("Starter")).toHaveText("$79");
+    await pricing.getBillingToggle().click();
+    await expect(pricing.getTierPrice("Starter")).toHaveText("$790");
+    await expect(
+      pricing.getTierCard("Starter").getByText("2 months free"),
+    ).toBeVisible();
+  });
+
+  test("billing toggle restores monthly prices when switched back", async ({
+    page,
+  }) => {
+    const pricing = new PricingPage(page);
+    await pricing.goto();
+    await pricing.getBillingToggle().click();
+    await expect(pricing.getTierPrice("Starter")).toHaveText("$790");
+    await pricing.getBillingToggle().click();
+    await expect(pricing.getTierPrice("Starter")).toHaveText("$79");
+  });
+
+  test("free card shows $0 regardless of billing toggle", async ({
+    page,
+  }) => {
+    const pricing = new PricingPage(page);
+    await pricing.goto();
+    await expect(pricing.getTierPrice("Free")).toHaveText("$0");
+    await pricing.getBillingToggle().click();
+    await expect(pricing.getTierPrice("Free")).toHaveText("$0");
+  });
+
+  test("enterprise card shows from $1,499 regardless of toggle", async ({
+    page,
+  }) => {
+    const pricing = new PricingPage(page);
+    await pricing.goto();
+    await expect(pricing.getTierPrice("Enterprise")).toHaveText(
+      "From $1,499",
+    );
+    await pricing.getBillingToggle().click();
+    await expect(pricing.getTierPrice("Enterprise")).toHaveText(
+      "From $1,499",
+    );
+  });
+
+  test("comparison table is visible with competitor rows", async ({
+    page,
+  }) => {
+    const pricing = new PricingPage(page);
+    await pricing.goto();
+    await expect(pricing.getComparisonTable()).toBeVisible();
+    await expect(
+      page.getByRole("cell", { name: "Explainable AI" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("columnheader", { name: "Launchable" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("columnheader", { name: "DIY Scripts" }),
+    ).toBeVisible();
+  });
+
+  test("calculator shows best value badge for recommended tier", async ({
+    page,
+  }) => {
+    const pricing = new PricingPage(page);
+    await pricing.goto();
+    await expect(pricing.getDeveloperCount()).toBeVisible();
+    await expect(pricing.getCalculatorSlider()).toBeVisible();
+    await expect(pricing.getCalculatorTierRow("growth")).toBeVisible();
+    await expect(pricing.getBestValueBadge()).toBeVisible();
   });
 });

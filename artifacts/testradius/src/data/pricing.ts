@@ -1,87 +1,184 @@
-import { CheckCircle2, HelpCircle, Zap, Shield, Building2 } from "lucide-react";
+import { Zap, Rocket, Shield, BarChart3, Building2 } from "lucide-react";
 
 export interface PricingTier {
   name: string;
-  price: string;
+  monthlyPrice: number | null;
+  annualPrice: number | null;
   period: string;
+  annualPeriod: string;
+  devRange: string;
   description: string;
-  cta: string;
-  ctaVariant: "default" | "outline";
-  highlighted?: boolean;
+  features: string[];
+  ctaLabel: string;
+  ctaAction: "trial" | "contact-sales";
+  highlighted: boolean;
   badge?: string;
   icon: React.ElementType;
-  seatMinimum?: string;
-  features: string[];
-  limitations?: string[];
 }
 
 export const PRICING_TIERS: PricingTier[] = [
   {
-    name: "Shadow Mode",
-    price: "$0",
-    period: "forever",
+    name: "Free",
+    monthlyPrice: 0,
+    annualPrice: 0,
+    period: "month",
+    annualPeriod: "month",
+    devRange: "Unlimited",
     description:
-      "Get started with no commitment. See exactly which tests your PRs impact before you buy.",
-    cta: "Get Started Free",
-    ctaVariant: "outline",
-    icon: Zap,
+      "Get started with zero commitment — full shadow mode analysis, no credit card needed.",
     features: [
-      "Free shadow-mode analysis",
-      "PR comments showing impacted tests",
-      "5 analyses per month",
+      "Full shadow mode analysis",
+      "Unlimited PRs",
+      "GitHub Actions integration",
       "Community support",
     ],
+    ctaLabel: "Get Started Free",
+    ctaAction: "trial",
+    highlighted: false,
+    icon: Zap,
   },
   {
-    name: "Team",
-    price: "$29",
-    period: "per seat / month",
+    name: "Starter",
+    monthlyPrice: 79,
+    annualPrice: 790,
+    period: "month",
+    annualPeriod: "year",
+    devRange: "Up to 5",
     description:
-      "Scale confidently with automated test selection and full explainability across your team.",
-    cta: "Start Free Trial",
-    ctaVariant: "default",
+      "Perfect for solo founders and tiny teams getting started with automated test selection.",
+    features: [
+      "Up to 5 developers",
+      "All Free features",
+      "Automated test selection",
+      "Email support",
+    ],
+    ctaLabel: "Start Trial",
+    ctaAction: "trial",
+    highlighted: false,
+    icon: Rocket,
+  },
+  {
+    name: "Growth",
+    monthlyPrice: 25,
+    annualPrice: 250,
+    period: "developer / month",
+    annualPeriod: "developer / year",
+    devRange: "6\u201325",
+    description:
+      "For growing SaaS teams and Series A startups scaling their test infrastructure.",
+    features: [
+      "6\u201325 developers",
+      "All Starter features",
+      "Explainability dashboard",
+      "Slack integration",
+      "Priority email support",
+    ],
+    ctaLabel: "Start Trial",
+    ctaAction: "trial",
     highlighted: true,
     badge: "Most Popular",
     icon: Shield,
-    seatMinimum: "5 seat minimum",
+  },
+  {
+    name: "Scale",
+    monthlyPrice: 19,
+    annualPrice: 190,
+    period: "developer / month",
+    annualPeriod: "developer / year",
+    devRange: "26\u201375",
+    description:
+      "For mid-size engineering organisations with growing test suites.",
     features: [
-      "Unlimited shadow-mode analyses",
-      "Automated test selection",
-      "Explainability dashboard",
-      "Slack integration",
-      "Email support",
+      "26\u201375 developers",
+      "All Growth features",
+      "Team dashboard",
+      "Dedicated support",
+      "Advanced analytics",
     ],
+    ctaLabel: "Start Trial",
+    ctaAction: "trial",
+    highlighted: false,
+    icon: BarChart3,
   },
   {
     name: "Enterprise",
-    price: "Custom",
-    period: "starting ~$1,000/mo",
+    monthlyPrice: 1499,
+    annualPrice: 1499,
+    period: "month",
+    annualPeriod: "month",
+    devRange: "75+",
     description:
-      "For large teams with compliance needs. SSO, audit logs, dedicated support, and custom CI integrations.",
-    cta: "Contact Sales",
-    ctaVariant: "outline",
-    icon: Building2,
+      "For large teams with compliance needs, SSO, audit logs, and dedicated support.",
     features: [
-      "All Team features",
-      "SSO & SAML",
-      "Audit logs",
-      "Priority support",
-      "Custom CI integrations",
+      "75+ developers",
+      "All Scale features",
+      "SSO & compliance",
       "Dedicated account manager",
+      "SLA & priority support",
+      "Custom onboarding",
     ],
+    ctaLabel: "Contact Sales",
+    ctaAction: "contact-sales",
+    highlighted: false,
+    icon: Building2,
+  },
+];
+
+export interface ComparisonRow {
+  feature: string;
+  testRadius: string;
+  launchable: string;
+  diyScripts: string;
+}
+
+export const COMPARISON_ROWS: ComparisonRow[] = [
+  {
+    feature: "Explainable AI",
+    testRadius: "\u2713",
+    launchable: "\u2717 Black-box",
+    diyScripts: "\u2717",
+  },
+  {
+    feature: "Transparent pricing",
+    testRadius: "\u2713 From $79/mo",
+    launchable: "\u2717 Contact us",
+    diyScripts: "\u2713 Free (but costly)",
+  },
+  {
+    feature: "Shadow mode trial",
+    testRadius: "\u2713 Risk-free",
+    launchable: "\u2717 No",
+    diyScripts: "\u2717 N/A",
+  },
+  {
+    feature: "Volume discounts",
+    testRadius: "\u2713 As you grow",
+    launchable: "\u2717 Opaque",
+    diyScripts: "\u2713 N/A",
+  },
+  {
+    feature: "Flaky test reduction",
+    testRadius: "\u2713 Built-in",
+    launchable: "\u2713 Limited",
+    diyScripts: "\u2717 Manual",
   },
 ];
 
 export const FAQ_ITEMS = [
   {
-    question: "Why a 5-seat minimum on the Team plan?",
+    question: "Can I start with the Free plan and upgrade later?",
     answer:
-      "We serve engineering teams, not individuals. The 5-seat minimum ensures you get the full value of TestRadius — dependency-aware test selection only works when a team's full codebase is mapped. For smaller teams or individuals, our free Shadow Mode is a great starting point.",
+      "Absolutely. The Free plan is yours forever with full shadow mode analysis and unlimited PRs. When you're ready to scale, upgrade to Starter or Growth to unlock automated test selection, explainability dashboards, and team features.",
   },
   {
-    question: "Can I start with Shadow Mode and upgrade later?",
+    question: "How does annual billing work?",
     answer:
-      "Absolutely. Shadow Mode is free forever with 5 analyses per month. When you're ready to scale, upgrade to Team and unlock unlimited analyses, automated test selection, and Slack integration.",
+      "Annual billing gives you the equivalent of 2 months free on every paid plan. For example, Starter is $79/month or $790/year \u2014 saving you $158. All annual subscriptions are billed upfront and include a 30-day money-back guarantee.",
+  },
+  {
+    question: "Can I switch from monthly to annual billing?",
+    answer:
+      "Yes, anytime. If you're on monthly billing and want to switch to annual, we'll prorate your current month and bill the annual rate. Contact support or manage this from your account settings.",
   },
   {
     question: "What forms of payment do you accept?",
