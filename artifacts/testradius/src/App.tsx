@@ -4,6 +4,7 @@ import { Home } from "./pages/Home";
 import { BlogIndex } from "./pages/BlogIndex";
 import { BlogPost } from "./pages/BlogPost";
 import { Careers } from "./pages/Careers";
+import { Pricing } from "./pages/Pricing";
 import { DocsPage } from "./pages/DocsPage";
 
 function App() {
@@ -35,6 +36,9 @@ function App() {
       </Route>
       <Route path="/blog/:slug">
         <BlogPost />
+      </Route>
+      <Route path="/pricing">
+        <Pricing />
       </Route>
       <Route path="/jobs">
         <Careers />

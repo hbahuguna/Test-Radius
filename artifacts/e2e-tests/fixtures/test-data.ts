@@ -7,17 +7,20 @@ export const BLOG_SLUGS = [
   "lessons-from-one-person-ai-agent-businesses-for-tia",
   "code-coverage-tia-article",
   "build-testradius-github-app",
+  "sdet-model-journey",
 ] as const;
 
 export const ROUTES = {
   HOME: "/",
   BLOG: "/blog",
+  PRICING: "/pricing",
   CAREERS: "/jobs",
   CAREERS_ALT: "/careers",
 } as const;
 
 export const NAV_LABELS = {
   BLOG: "Blog",
+  PRICING: "Pricing",
   CAREERS: "Careers",
   JOIN_PILOT: "Join Pilot",
   GET_EARLY_ACCESS: "Get Early Access",
