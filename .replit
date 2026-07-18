@@ -112,6 +112,7 @@ externalPort = 3001
 [userenv.shared]
 VITE_SUPABASE_URL = "https://ntcaohfrebjwdtdmzrml.supabase.co"
 VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im50Y2FvaGZyZWJqd2R0ZG16cm1sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzMDAyMDMsImV4cCI6MjA5OTg3NjIwM30.dm7K7VheMvR0EOJxWwFKPPA_5QlEZ_UBz1EfSekmvDc"
+SUPABASE_URL = "https://ntcaohfrebjwdtdmzrml.supabase.co"
 
 # [[ports]]
 # localPort = 8081
