@@ -160,14 +160,14 @@ export async function requireSignedUp(req: Request, res: Response, next: NextFun
     return;
   }
 
-  // Confirm the tenant exists (signup completed). Login-only callers with no
-  // tenant record are refused — they must sign up first.
+  // Auto-provision the user row if it doesn't exist yet (e.g. OAuth redirect
+  // happened before the DB was ready, or the user is returning on a new device).
   const { getOrCreateUser } = await import("../lib/auth");
-  const record = await getOrCreateUser(user, { allowCreate: false });
+  const record = await getOrCreateUser(user, { allowCreate: true });
   if (!record) {
-    res.status(403).json({
-      error: "signup_required",
-      message: "No account found. Please sign up before signing in.",
+    res.status(500).json({
+      error: "provision_failed",
+      message: "Could not provision user account. Please try again.",
     });
     return;
   }

@@ -113,6 +113,7 @@ externalPort = 3001
 VITE_SUPABASE_URL = "https://ntcaohfrebjwdtdmzrml.supabase.co"
 VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im50Y2FvaGZyZWJqd2R0ZG16cm1sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzMDAyMDMsImV4cCI6MjA5OTg3NjIwM30.dm7K7VheMvR0EOJxWwFKPPA_5QlEZ_UBz1EfSekmvDc"
 SUPABASE_URL = "https://ntcaohfrebjwdtdmzrml.supabase.co"
+ENCRYPTION_KEY = "22bd0ccc0efed785ff33dc661a6597b24b4522e033f42aeb6ee09430cbdb342e"
 
 # [[ports]]
 # localPort = 8081
