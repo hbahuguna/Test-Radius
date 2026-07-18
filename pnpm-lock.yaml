@@ -557,9 +557,6 @@ importers:
       '@rollup/rollup-darwin-x64':
         specifier: ^4.60.1
         version: 4.60.1
-      '@supabase/supabase-js':
-        specifier: ^2.58.0
-        version: 2.110.7
       '@tailwindcss/typography':
         specifier: ^0.5.15
         version: 0.5.19(tailwindcss@4.2.2)
