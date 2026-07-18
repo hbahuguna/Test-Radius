@@ -85,51 +85,12 @@ router.post("/run", async (req: Request, res: Response) => {
     }
   }
 
-  // Stream the agent response back to the client
+  // Stream the agent response back to the client (runs in-process)
   try {
-    const agentRes = await proxyAgenticStream(agentBody as never);
-    res.setHeader("Content-Type", "application/x-ndjson");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
+    const summary = await proxyAgenticStream(agentBody as never, res);
 
-    const reader = agentRes.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let finalSuccess: boolean | null = null;
-    let finalAssertions: unknown = null;
-    let finalCode: string | null = null;
-    let finalError: string | null = null;
-
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      // Forward complete NDJSON lines as they arrive
-      let nl: number;
-      while ((nl = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
-        if (!line) continue;
-        try {
-          const evt = JSON.parse(line);
-          if (evt.event === "done") {
-            finalSuccess = Boolean(evt.success);
-            finalError = typeof evt.error === "string" ? evt.error : null;
-            finalAssertions = evt.trace?.assertions ?? null;
-            finalCode = typeof evt.generated_code === "string" ? evt.generated_code : null;
-            // Annotate the forwarded done event with the generated code so the
-            // frontend can render the final Playwright test.
-            if (finalCode) evt.generated_code = finalCode;
-          }
-        } catch {
-          // ignore malformed line
-        }
-        res.write(line + "\n");
-      }
-    }
-    if (buffer.trim()) res.write(buffer.trim() + "\n");
+    const { success: finalSuccess, error: finalError, assertions: finalAssertions } = summary;
+    const finalCode = summary.generatedCode;
 
     // Refund the credit when the run failed purely because of an invalid BYOK
     // (bring-your-own-key) provider key — the user shouldn't pay for a config
@@ -169,13 +130,13 @@ router.post("/run", async (req: Request, res: Response) => {
 
     res.end();
   } catch (err) {
-    logger.error({ err, runId: run.id }, "Agentic run proxy failed");
+    logger.error({ err, runId: run.id }, "Agentic run failed");
     await db
       .update(agenticRunsTable)
       .set({ status: "failed", completedAt: new Date() })
       .where(eq(agenticRunsTable.id, run.id));
     if (!res.headersSent) {
-      res.status(502).json({ error: "agent_error", message: "Failed to reach agent service" });
+      res.status(502).json({ error: "agent_error", message: "Failed to run agent" });
     } else {
       res.end();
     }

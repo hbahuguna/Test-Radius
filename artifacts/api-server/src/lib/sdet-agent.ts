@@ -1,6 +1,6 @@
+import type { Response } from "express";
 import { logger } from "../lib/logger";
-
-const AGENT_URL = process.env.SDET_AGENT_URL || "http://localhost:8006";
+import { runStream, stopRun, getScreenshot } from "@workspace/agent";
 
 export interface AgenticRequestBody {
   url: string;
@@ -23,51 +23,84 @@ export interface AgenticRequestBody {
   model?: string;
 }
 
-/**
- * Proxy an agentic run stream from the SDET agent. Returns the raw Response
- * so the caller can stream the NDJSON body back to the client.
- */
-export async function proxyAgenticStream(body: AgenticRequestBody): Promise<Response> {
-  const url = `${AGENT_URL}/v1/agentic-stream`;
-  logger.info({ url, target: body.url }, "Proxying agentic run to SDET agent");
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`SDET agent error ${res.status}: ${text.slice(0, 200)}`);
-  }
-  return res;
+export interface AgenticRunSummary {
+  success: boolean | null;
+  error: string | null;
+  assertions: unknown;
+  generatedCode: string | null;
 }
 
 /**
- * Ask the SDET agent to stop the current run.
+ * Run the agentic test in-process (no external Python :8006 service) and
+ * stream the NDJSON events directly to the Express response. Resolves with a
+ * summary of the final `done` event for DB persistence/credit refunds.
+ */
+export async function proxyAgenticStream(
+  body: AgenticRequestBody,
+  res?: Response,
+): Promise<AgenticRunSummary> {
+  logger.info({ target: body.url }, "Running agentic run in-process");
+  const byok: Record<string, string> = {};
+  if (body.openai_api_key) byok.openai = body.openai_api_key;
+  if (body.anthropic_api_key) byok.anthropic = body.anthropic_api_key;
+  if (body.google_api_key) byok.google = body.google_api_key;
+  if (body.opencode_api_key) byok.opencode = body.opencode_api_key;
+
+  const input = {
+    goal: body.goal,
+    url: body.url,
+    assertions: body.assertions ?? [],
+    headless: body.headless ?? true,
+    maxTurns: body.max_turns ?? 30,
+    byok: Object.keys(byok).length ? byok : null,
+    model: body.model ?? null,
+  };
+
+  if (res) {
+    res.setHeader("Content-Type", "application/x-ndjson");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+  }
+
+  const summary: AgenticRunSummary = {
+    success: null,
+    error: null,
+    assertions: null,
+    generatedCode: null,
+  };
+
+  for await (const line of runStream(input)) {
+    if (res) res.write(line);
+    if (line.trim()) {
+      try {
+        const evt = JSON.parse(line);
+        if (evt.event === "done") {
+          summary.success = Boolean(evt.success);
+          summary.error = typeof evt.error === "string" ? evt.error : null;
+          summary.assertions = evt.trace?.assertions ?? null;
+          summary.generatedCode =
+            typeof evt.generated_code === "string" ? evt.generated_code : null;
+        }
+      } catch {
+        /* ignore malformed line */
+      }
+    }
+  }
+  return summary;
+}
+
+/**
+ * Ask the in-process agent to stop the current run.
  */
 export async function stopAgentRun(): Promise<void> {
-  const url = `${AGENT_URL}/v1/agentic/stop`;
-  await fetch(url, { method: "POST" }).catch((err) => {
-    logger.warn({ err }, "Failed to signal agent stop");
-  });
+  stopRun();
 }
 
 /**
- * Fetch a live screenshot from the SDET agent. The agent returns a raw
- * image/png response, so we read the bytes and base64-encode them.
+ * Fetch the agent's current live screenshot (base64).
  */
 export async function getAgentScreenshot(): Promise<Buffer | null> {
-  const url = `${AGENT_URL}/v1/agentic/screenshot`;
-  const res = await fetch(url).catch(() => null);
-  if (!res || !res.ok) return null;
-  const contentType = res.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json")) {
-    const data = (await res.json().catch(() => null)) as { screenshot?: string } | null;
-    if (!data?.screenshot) return null;
-    return Buffer.from(data.screenshot, "base64");
-  }
-  // Raw image/png (the agent's default response).
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.length === 0) return null;
-  return buf;
+  const r = await getScreenshot();
+  if (!r?.screenshot) return null;
+  return Buffer.from(r.screenshot, "base64");
 }

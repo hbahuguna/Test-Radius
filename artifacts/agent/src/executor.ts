@@ -1,0 +1,227 @@
+/**
+ * Agentic executor (TypeScript port). Runs a goal-driven browser test:
+ * plan -> act -> observe, streaming structured events. Faithful to the
+ * contract the Test-Radius api-server / frontend consume:
+ *   thinking_delta, content_delta, tool_call, tool_result, node, done, error
+ * The `done` event carries { success, trace:{ assertions }, generated_code }.
+ */
+
+import { LLMFactory, buildByokFactory, defaultFactory } from "./reasoning/llmFactory.js";
+import { ByokAuthError, ByokError } from "./reasoning/byokClient.js";
+import * as bt from "./tools/browserTools.js";
+
+export type EventSink = (event: string, data: Record<string, any>) => void;
+
+export interface AgenticRunOptions {
+  goal: string;
+  url: string;
+  assertions?: Array<Record<string, any>>;
+  headless?: boolean;
+  maxTurns?: number;
+  byok?: Record<string, string> | null;
+  model?: string | null;
+}
+
+export interface RunResult {
+  success: boolean;
+  trace: { goal: string; url: string; assertions?: unknown };
+  generatedCode?: string | null;
+  error?: string | null;
+  stopped?: boolean;
+}
+
+let stopRequested = false;
+export function requestStop(): void {
+  stopRequested = true;
+}
+export function clearStop(): void {
+  stopRequested = false;
+}
+
+interface PlanStep {
+  action: string;
+  target?: string;
+  value?: string;
+  thought?: string;
+}
+
+function stripCodeFences(text: string): string {
+  const m = text.match(/```(?:ts|typescript|js|javascript)?\s*([\s\S]*?)```/);
+  return m ? m[1].trim() : text.trim();
+}
+
+function extractJsonArray(text: string): PlanStep[] {
+  // Grab the first balanced JSON array.
+  const start = text.indexOf("[");
+  const end = text.lastIndexOf("]");
+  if (start === -1 || end === -1) return [];
+  try {
+    const arr = JSON.parse(text.slice(start, end + 1));
+    if (Array.isArray(arr)) return arr as PlanStep[];
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
+export class AgenticExecutor {
+  llm: LLMFactory;
+  private readonly isByok: boolean;
+
+  constructor(opts: { byok?: Record<string, string> | null; model?: string | null } = {}) {
+    if (opts.byok && Object.keys(opts.byok).length) {
+      this.llm = buildByokFactory(opts.byok, opts.model);
+      this.isByok = true;
+    } else {
+      this.llm = defaultFactory();
+      this.isByok = false;
+    }
+  }
+
+  private async validateByok(): Promise<void> {
+    const [name, out] = await this.llm.streamInfer(
+      "Reply with the single word: OK",
+      { onDelta: () => {} },
+      8,
+      0,
+    );
+    if (!name) throw new ByokError("BYOK key did not produce a response.");
+  }
+
+  async run(
+    opts: AgenticRunOptions,
+    emit: EventSink,
+  ): Promise<RunResult> {
+    const { goal, url, assertions = [], headless = true, maxTurns = 30 } = opts;
+    const trace = { goal, url, assertions };
+    clearStop();
+
+    if (this.isByok) {
+      try {
+        await this.validateByok();
+      } catch (e: any) {
+        const msg = e instanceof ByokAuthError || e instanceof ByokError
+          ? e.message
+          : `Provider error: ${e?.message ?? e}`;
+        emit("error", { message: msg });
+        emit("done", { success: false, error: msg, trace });
+        return { success: false, trace, error: msg };
+      }
+    }
+
+    emit("node", { node_id: "agentic", role: "agent", name: "agentic-execute" });
+    const start = await bt.browserStart(headless);
+    if (start.status === "error") {
+      emit("error", { message: start.error });
+      emit("done", { success: false, error: start.error, trace });
+      return { success: false, trace, error: start.error };
+    }
+
+    const nav = await bt.browserNavigate(url);
+    if (!nav.ok) {
+      emit("error", { message: nav.error });
+      emit("done", { success: false, error: nav.error, trace });
+      return { success: false, trace, error: nav.error };
+    }
+
+    let generatedCode: string | null = null;
+    let success = false;
+
+    try {
+      const snap = await bt.browserSnapshot();
+      const elements = snap.interactive_elements ?? [];
+      const plan = await this.planBatch(goal, assertions, nav.url || url, elements, emit);
+      if (plan.length === 0) {
+        emit("thinking_delta", { text: "No actionable steps planned; reporting current state." });
+      }
+
+      for (const step of plan) {
+        if (stopRequested) {
+          emit("error", { message: "stopped by user" });
+          emit("done", { success: false, error: "stopped by user", trace, stopped: true });
+          return { success: false, trace, error: "stopped by user", stopped: true };
+        }
+        const action = step.action || "fail";
+        emit("tool_call", { name: action, arguments: { target: step.target, value: step.value } });
+        let result: { ok: boolean; error?: string };
+        if (action === "click" && step.target) {
+          result = await bt.browserClick(step.target);
+        } else if (action === "type" && step.target) {
+          result = await bt.browserType(step.target, step.value || "");
+        } else if (action === "scroll") {
+          result = await bt.browserScroll("down");
+        } else if (action === "navigate" && step.target) {
+          result = await bt.browserNavigate(step.target).then((r) => ({ ok: r.ok, error: r.error }));
+        } else {
+          result = { ok: false, error: `unsupported action: ${action}` };
+        }
+        emit("tool_result", { name: action, result: result.ok ? "ok" : result.error });
+        if (!result.ok) {
+          emit("thinking_delta", { text: `Step failed: ${result.error}` });
+        }
+      }
+
+      // Generate a Playwright test from the run.
+      const code = await this.generateCode(goal, url, plan, emit);
+      generatedCode = code;
+      success = true;
+    } catch (e: any) {
+      const msg = e?.message ?? String(e);
+      emit("error", { message: msg });
+      emit("done", { success: false, error: msg, trace });
+      return { success: false, trace, error: msg };
+    } finally {
+      await bt.browserClose();
+    }
+
+    emit("done", { success, trace, generated_code: generatedCode });
+    return { success, trace, generatedCode };
+  }
+
+  private async planBatch(
+    goal: string,
+    assertions: Array<Record<string, any>>,
+    currentUrl: string,
+    elements: bt.SnapshotElement[],
+    emit: EventSink,
+  ): Promise<PlanStep[]> {
+    const elemLines = elements
+      .map((e) => `- ${e.ref} ${e.role}|${e.name}`)
+      .join("\n") || "(no interactive elements)";
+    const assertLines = assertions.map((a) => `- ${a.type} ${a.target ?? ""}`).join("\n") || "(none)";
+    const prompt = `You are a test automation planner. Given a page and a goal, return a JSON array of steps to achieve the goal.
+Each step: {"action":"click|type|scroll|navigate|wait", "target":"<element ref like [3]>", "value":"<text for type>", "thought":"short reason"}.
+Only output the JSON array, no prose, no markdown.
+
+GOAL: ${goal}
+CURRENT URL: ${currentUrl}
+ASSERTIONS: ${assertLines}
+ELEMENTS:
+${elemLines}`;
+
+    const [_, out] = await this.llm.streamInfer(prompt, {
+      onDelta: (kind, text) => emit("thinking_delta", { text, kind }),
+    }, 2048, 0);
+    return extractJsonArray(out);
+  }
+
+  private async generateCode(
+    goal: string,
+    url: string,
+    steps: PlanStep[],
+    emit: EventSink,
+  ): Promise<string> {
+    const stepLines = steps.map((s) => `- ${s.action} ${s.target ?? ""} ${s.value ?? ""}`).join("\n") || "- (no steps)";
+    const prompt = `Write a Playwright (TypeScript) test that accomplishes this goal. Return ONLY a fenced typescript code block.
+
+GOAL: ${goal}
+URL: ${url}
+STEPS TAKEN:
+${stepLines}`;
+
+    const [_, out] = await this.llm.streamInfer(prompt, {
+      onDelta: (kind, text) => emit("content_delta", { text, kind }),
+    }, 2048, 0.3);
+    return stripCodeFences(out);
+  }
+}
