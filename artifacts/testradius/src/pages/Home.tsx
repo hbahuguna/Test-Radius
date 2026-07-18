@@ -87,21 +87,23 @@ export function Home() {
                 variants={fadeInUp}
                 className="flex flex-col sm:flex-row gap-4"
               >
-                <Button
-                  size="lg"
-                  className="h-14 px-8 text-base font-medium"
-                  onClick={scrollToForm}
-                >
-                  Get Early Access <ArrowRight className="ml-2 h-5 w-5" />
-                </Button>
-                <Button
-                  size="lg"
-                  variant="outline"
-                  className="h-14 px-8 text-base font-medium"
-                  onClick={scrollToForm}
-                >
-                  Join the Pilot
-                </Button>
+                <Link href="/login">
+                  <Button
+                    size="lg"
+                    className="h-14 px-8 text-base font-medium"
+                  >
+                    Get Early Access <ArrowRight className="ml-2 h-5 w-5" />
+                  </Button>
+                </Link>
+                <Link href="/login">
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="h-14 px-8 text-base font-medium"
+                  >
+                    Join the Pilot
+                  </Button>
+                </Link>
               </motion.div>
             </motion.div>
 

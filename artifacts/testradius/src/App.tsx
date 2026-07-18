@@ -6,9 +6,15 @@ import { BlogPost } from "./pages/BlogPost";
 import { Careers } from "./pages/Careers";
 import { Pricing } from "./pages/Pricing";
 import { DocsPage } from "./pages/DocsPage";
+import { Login } from "./pages/Login";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import { Tester } from "./pages/Tester";
+import { Settings } from "./pages/Settings";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 function App() {
   return (
+    <ErrorBoundary>
     <Switch>
       <Route path="/">
         <Home />
@@ -46,10 +52,24 @@ function App() {
       <Route path="/careers">
         <Careers />
       </Route>
+      <Route path="/login">
+        <Login />
+      </Route>
+      <Route path="/tester">
+        <ProtectedRoute>
+          <Tester />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/settings">
+        <ProtectedRoute>
+          <Settings />
+        </ProtectedRoute>
+      </Route>
       <Route>
         <center>404: Not Found</center>
       </Route>
     </Switch>
+    </ErrorBoundary>
   );
 }
 
