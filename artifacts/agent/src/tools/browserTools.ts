@@ -28,7 +28,18 @@ let elementCounter = 0;
 export async function browserStart(headless = true): Promise<BrowserStartResult> {
   try {
     if (!browser) {
-      browser = await chromium.launch({ headless });
+      const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+      browser = await chromium.launch({
+        headless,
+        ...(executablePath ? { executablePath } : {}),
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--single-process",
+        ],
+      });
     }
     if (!context) {
       context = await browser.newContext();
