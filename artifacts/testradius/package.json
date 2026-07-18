@@ -78,6 +78,7 @@
     "zod": "catalog:"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.7",
     "@tailwindcss/oxide-darwin-x64": "^4.3.0"
   }
 }
