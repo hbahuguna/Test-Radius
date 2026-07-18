@@ -14,7 +14,9 @@ export class Hy3Client {
 
   constructor(apiKey?: string, apiUrl?: string, model = "hy3-free") {
     this.baseUrl = (apiUrl || process.env.OPENCODE_ZEN_BASE_URL || ZEN_DEFAULT_BASE_URL).replace(/\/$/, "");
-    this.model = process.env.OPENCODE_MODEL || model;
+    // Strip provider prefix (e.g. "opencode/hy3-free" → "hy3-free")
+    const stripped = model.includes("/") ? model.split("/").slice(1).join("/") : model;
+    this.model = process.env.OPENCODE_MODEL || stripped;
     this.apiKey = apiKey || process.env.OPENCODE_API_KEY || process.env.OPENCODE_ZEN_API_KEY;
   }
 

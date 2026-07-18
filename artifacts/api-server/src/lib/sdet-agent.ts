@@ -74,12 +74,18 @@ export async function proxyAgenticStream(
     if (line.trim()) {
       try {
         const evt = JSON.parse(line);
+        if (evt.event === "error") {
+          logger.error({ agentError: evt.message }, "Agent emitted error event");
+        }
         if (evt.event === "done") {
           summary.success = Boolean(evt.success);
           summary.error = typeof evt.error === "string" ? evt.error : null;
           summary.assertions = evt.trace?.assertions ?? null;
           summary.generatedCode =
             typeof evt.generated_code === "string" ? evt.generated_code : null;
+          if (!summary.success) {
+            logger.error({ agentDoneError: summary.error, success: false }, "Agent run finished with failure");
+          }
         }
       } catch {
         /* ignore malformed line */

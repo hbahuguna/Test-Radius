@@ -37,7 +37,6 @@ export async function browserStart(headless = true): Promise<BrowserStartResult>
           "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
           "--disable-gpu",
-          "--single-process",
         ],
       });
     }
