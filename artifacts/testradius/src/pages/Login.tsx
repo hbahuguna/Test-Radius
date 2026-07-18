@@ -13,6 +13,7 @@ export function Login() {
   const isSignup = new URLSearchParams(location.split("?")[1] ?? "").get("mode") === "signup";
   const [mode, setMode] = useState<"login" | "signup">(isSignup ? "signup" : "login");
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<"github" | "google" | null>(null);
   const signup = mode === "signup";
 
   useEffect(() => {
@@ -28,6 +29,36 @@ export function Login() {
     setError(null);
     const url = next === "signup" ? "/login?mode=signup" : "/login";
     window.history.replaceState(null, "", url);
+  };
+
+  const handleGitHub = async () => {
+    setError(null);
+    setLoading("github");
+    try {
+      await signInWithGitHub(mode);
+    } catch (err) {
+      setLoading(null);
+      if (err instanceof Error && err.message === "Supabase is not configured") {
+        setError("Authentication is not configured yet. Please contact the site administrator.");
+      } else {
+        setError("Something went wrong. Please try again.");
+      }
+    }
+  };
+
+  const handleGoogle = async () => {
+    setError(null);
+    setLoading("google");
+    try {
+      await signInWithGoogle(mode);
+    } catch (err) {
+      setLoading(null);
+      if (err instanceof Error && err.message === "Supabase is not configured") {
+        setError("Authentication is not configured yet. Please contact the site administrator.");
+      } else {
+        setError("Something went wrong. Please try again.");
+      }
+    }
   };
 
   return (
@@ -80,16 +111,24 @@ export function Login() {
             <Button
               variant="outline"
               className="w-full gap-2 h-11"
-              onClick={() => signInWithGitHub(mode)}
+              onClick={handleGitHub}
+              disabled={loading !== null}
             >
-              <Github className="h-5 w-5" /> {signup ? "Sign up with GitHub" : "Continue with GitHub"}
+              <Github className="h-5 w-5" />
+              {loading === "github"
+                ? "Redirecting…"
+                : signup ? "Sign up with GitHub" : "Continue with GitHub"}
             </Button>
             <Button
               variant="outline"
               className="w-full gap-2 h-11"
-              onClick={() => signInWithGoogle(mode)}
+              onClick={handleGoogle}
+              disabled={loading !== null}
             >
-              <Chrome className="h-5 w-5" /> {signup ? "Sign up with Google" : "Continue with Google"}
+              <Chrome className="h-5 w-5" />
+              {loading === "google"
+                ? "Redirecting…"
+                : signup ? "Sign up with Google" : "Continue with Google"}
             </Button>
 
             <p className="text-xs text-muted-foreground text-center mt-4">
