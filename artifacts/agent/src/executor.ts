@@ -50,18 +50,40 @@ function stripCodeFences(text: string): string {
   return m ? m[1].trim() : text.trim();
 }
 
-function extractJsonArray(text: string): PlanStep[] {
-  // Grab the first balanced JSON array.
-  const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
-  if (start === -1 || end === -1) return [];
-  try {
-    const arr = JSON.parse(text.slice(start, end + 1));
-    if (Array.isArray(arr)) return arr as PlanStep[];
-  } catch {
-    /* ignore */
+function extractJsonObject(text: string): PlanStep | null {
+  // Strip markdown code fences if present, then find the first balanced {...}.
+  const cleaned = text
+    .replace(/```(?:json|typescript|js|javascript)?/gi, "")
+    .replace(/```/g, "")
+    .trim();
+  const start = cleaned.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        const slice = cleaned.slice(start, i + 1);
+        try {
+          return JSON.parse(slice) as PlanStep;
+        } catch {
+          return null;
+        }
+      }
+    }
   }
-  return [];
+  return null;
 }
 
 export class AgenticExecutor {
@@ -135,6 +157,8 @@ export class AgenticExecutor {
       // (a single up-front plan goes stale the moment the page reloads).
       const executed: PlanStep[] = [];
       let turns = 0;
+      let lastKey = "";
+      let sameFailStreak = 0;
 
       while (turns < maxTurns) {
         if (stopRequested) {
@@ -178,6 +202,11 @@ export class AgenticExecutor {
         }
 
         const action = next.action;
+        if (!action || typeof action !== "string") {
+          emit("thinking_delta", { text: "Planner returned an unrecognized action; re-observing." });
+          await bt.browserWait(1000);
+          continue;
+        }
         emit("tool_call", { name: action, arguments: { target: next.target, value: next.value } });
         let result: { ok: boolean; error?: string };
         if (action === "click" && next.target) {
@@ -206,7 +235,25 @@ export class AgenticExecutor {
         if (action !== "navigate") executed.push(next);
         emit("tool_result", { name: action, result: result.ok ? "ok" : result.error });
         if (!result.ok) {
+          const key = `${action}:${next.target ?? ""}`;
+          if (key === lastKey) sameFailStreak += 1;
+          else {
+            lastKey = key;
+            sameFailStreak = 1;
+          }
           emit("thinking_delta", { text: `Step failed: ${result.error}. Will re-observe and retry.` });
+          // Break a stuck loop: if the same action fails repeatedly, nudge the
+          // page with a wait/scroll so a fresh snapshot can find new elements.
+          if (sameFailStreak >= 3) {
+            emit("thinking_delta", { text: "Same step failed 3x; nudging the page to recover." });
+            await bt.browserWait(1500);
+            await bt.browserScroll("down");
+            sameFailStreak = 0;
+            lastKey = "";
+          }
+        } else {
+          lastKey = "";
+          sameFailStreak = 0;
         }
       }
 
@@ -273,6 +320,7 @@ RULES:
 - Use an [EDITABLE text field] for any "type" step. Do NOT type into buttons or links.
 - Prefer elements whose name matches the goal (e.g. a search field for a destination query).
 - Choose exactly ONE next action based on the CURRENT elements; do not repeat a step that just succeeded unless it makes new progress.
+- If CURRENT ELEMENTS is empty, the page is likely still loading or rendered no standard controls — choose "wait" or "scroll" to let it settle. NEVER reference an element ref (like [1]) when the element list is empty.
 Only output the JSON object, no prose, no markdown.
 
 GOAL: ${goal}
@@ -286,15 +334,8 @@ ${elemLines}`;
     const [_, out] = await this.llm.streamInfer(prompt, {
       onDelta: (kind, text) => emit("thinking_delta", { text, kind }),
     }, 1024, 0);
-    const arr = extractJsonArray(out);
-    if (arr.length > 0) return arr[0];
-    // Some models return a bare object; try to parse one.
-    try {
-      const obj = JSON.parse(out.trim());
-      if (obj && typeof obj.action === "string") return obj as PlanStep;
-    } catch {
-      /* ignore */
-    }
+    const step = extractJsonObject(out);
+    if (step && typeof step.action === "string") return step;
     return null;
   }
 
