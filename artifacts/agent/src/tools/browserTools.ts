@@ -170,6 +170,19 @@ export async function browserClick(ref: string): Promise<{ ok: boolean; error?: 
       await page!.waitForLoadState("domcontentloaded").catch(() => {});
       return { ok: true, error: "navigation" };
     }
+    // If an overlay/backdrop is intercepting the click, dismiss it and retry
+    // once before giving up. Covers search-autocomplete backdrops, modals, etc.
+    if (/intercepts pointer events|overlay|backdrop|is not clickable/i.test(msg)) {
+      await browserDismissOverlay().catch(() => {});
+      await page!.waitForTimeout(400).catch(() => {});
+      try {
+        await target.click({ timeout: 5000, noWaitAfter: true, force: true });
+        await page!.waitForLoadState("domcontentloaded").catch(() => {});
+        return { ok: true };
+      } catch {
+        return { ok: false, error: msg };
+      }
+    }
     return { ok: false, error: msg };
   }
 }
@@ -237,6 +250,7 @@ export async function browserDismissOverlay(): Promise<{ ok: boolean; dismissed:
       '[aria-label*="Close" i]',
       'button[class*="close"]',
       'div[role="dialog"] button',
+      '[data-testid*="autocomplete-backdrop"]',
     ];
     for (const sel of selectors) {
       const btn = page.locator(sel).filter({ visible: true }).first();
@@ -245,6 +259,25 @@ export async function browserDismissOverlay(): Promise<{ ok: boolean; dismissed:
         return { ok: true, dismissed: true };
       }
     }
+    // Backdrops often have no close button — remove the intercepting overlay
+    // element directly so it stops blocking pointer events. This runs in the
+    // browser context; cast to any to avoid pulling DOM types into the build.
+    const removed = await page.evaluate((): boolean => {
+      const doc = (globalThis as any).document;
+      if (!doc) return false;
+      const els = Array.from(
+        doc.querySelectorAll(
+          '[data-testid*="backdrop"], [class*="backdrop"], [data-bui-trap-root], [aria-modal="true"]',
+        ),
+      ).filter((el: any) => {
+        const s = (globalThis as any).getComputedStyle(el);
+        const r = el.getBoundingClientRect();
+        return (r.width > 0 && r.height > 0 && s.pointerEvents !== "none" && Number(s.zIndex) > 0) || s.position === "fixed";
+      });
+      els.forEach((el: any) => el.remove());
+      return els.length > 0;
+    }).catch(() => false);
+    if (removed) return { ok: true, dismissed: true };
     // Fall back to Escape; if a dialog was open this closes it.
     await page.keyboard.press("Escape").catch(() => {});
     return { ok: true, dismissed: false };
@@ -261,7 +294,7 @@ export async function hasOverlay(): Promise<boolean> {
   try {
     const dialog = page.locator('[role="dialog"]').filter({ visible: true }).first();
     if (await dialog.count()) return true;
-    const trap = page.locator('[data-bui-trap-root], [data-testid*="overlay"], [aria-modal="true"]')
+    const trap = page.locator('[data-bui-trap-root], [data-testid*="overlay"], [aria-modal="true"], [data-testid*="backdrop"], [class*="backdrop"]')
       .filter({ visible: true })
       .first();
     return (await trap.count()) > 0;

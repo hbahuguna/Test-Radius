@@ -323,6 +323,7 @@ RULES:
 - Element refs (like [3]) are ONLY valid for THIS turn's CURRENT ELEMENTS. NEVER reuse a ref you picked in a previous turn — every turn, pick a fresh ref from the list shown above. If the page changed after a click/navigation, the elements are new.
 - After you click a link/button that opens a new page (e.g. a course result), the NEXT turn's CURRENT ELEMENTS will be that new page. Perform verification (enrollment/start option, description) on the NEW page, not by clicking the same result again.
 - If a click on a result keeps failing or the target is not visible, scroll to bring results into view and pick the visible ref from the refreshed list. Do NOT click the same hidden/detached ref repeatedly.
+- If a click is blocked by an overlay or backdrop intercepting pointer events, choose "dismiss" before retrying the click.
 - If CURRENT ELEMENTS is empty, the page is likely still loading or rendered no standard controls — choose "wait" or "scroll" to let it settle. NEVER reference an element ref (like [1]) when the element list is empty.
 Only output the JSON object, no prose, no markdown.
 
