@@ -92,7 +92,7 @@ export class AgenticExecutor {
     opts: AgenticRunOptions,
     emit: EventSink,
   ): Promise<RunResult> {
-    const { goal, url, assertions = [], headless = true, maxTurns = 30 } = opts;
+    const { goal, url, assertions = [], headless = true, maxTurns: maxTurnsOpt = 30 } = opts;
     const trace = { goal, url, assertions };
     clearStop();
 
@@ -126,82 +126,103 @@ export class AgenticExecutor {
 
     let generatedCode: string | null = null;
     let success = false;
+    const maxTurns = Math.max(1, Math.min(maxTurnsOpt, 60));
 
     try {
-      // Many sites show an intercepting modal/pop-up on load (Booking, etc.).
-      // Dismiss it up front, THEN snapshot, so the planner sees the real page
-      // and element refs are accurate (not the dismissed overlay's controls).
-      if (await bt.hasOverlay()) {
-        emit("thinking_delta", { text: "Detected an overlay/dialog; dismissing it before proceeding." });
-        const d = await bt.browserDismissOverlay();
-        if (d.dismissed) emit("tool_call", { name: "dismiss", arguments: {} });
-      }
+      // Per-turn agentic loop: each turn we snapshot the CURRENT page, ask the
+      // LLM for the single next action against that live DOM, then execute it.
+      // This keeps element refs valid even after navigations / overlay changes
+      // (a single up-front plan goes stale the moment the page reloads).
+      const executed: PlanStep[] = [];
+      let turns = 0;
 
-      const snap = await bt.browserSnapshot();
-      const elements = snap.interactive_elements ?? [];
-
-      const plan = await this.planBatch(goal, assertions, nav.url || url, elements, emit);
-      if (plan.length === 0) {
-        emit("thinking_delta", { text: "No actionable steps planned; reporting current state." });
-      }
-
-      let stepsSucceeded = 0;
-      let stepsExecuted = 0;
-
-      for (const step of plan) {
+      while (turns < maxTurns) {
         if (stopRequested) {
           emit("error", { message: "stopped by user" });
           emit("done", { success: false, error: "stopped by user", trace, stopped: true });
           return { success: false, trace, error: "stopped by user", stopped: true };
         }
+        turns += 1;
 
-        // Re-check for an overlay before each action; clicks can re-trigger one.
+        // Dismiss any overlay before observing/acting.
         if (await bt.hasOverlay()) {
-          emit("thinking_delta", { text: "Overlay reappeared; dismissing before next action." });
+          emit("thinking_delta", { text: "Detected an overlay/dialog; dismissing it before proceeding." });
           const d = await bt.browserDismissOverlay();
-          if (d.dismissed) emit("tool_call", { name: "dismiss", arguments: {} });
+          if (d.dismissed) {
+            emit("tool_call", { name: "dismiss", arguments: {} });
+            emit("tool_result", { name: "dismiss", result: "ok" });
+            executed.push({ action: "dismiss" });
+          }
         }
 
-        const action = step.action || "fail";
-        emit("tool_call", { name: action, arguments: { target: step.target, value: step.value } });
+        const snap = await bt.browserSnapshot();
+        const elements = snap.interactive_elements ?? [];
+        if (elements.length === 0 && executed.length === 0) {
+          emit("thinking_delta", { text: "No interactive elements found on the page." });
+        }
+
+        const next = await this.planNextStep(
+          goal,
+          assertions,
+          snap.url || nav.url || url,
+          elements,
+          executed,
+          emit,
+        );
+
+        // The planner may signal the goal is achieved.
+        if (!next || next.action === "done") {
+          emit("thinking_delta", { text: "Planner reports the goal is achieved." });
+          success = executed.some((s) => s.action === "type" || s.action === "click");
+          break;
+        }
+
+        const action = next.action;
+        emit("tool_call", { name: action, arguments: { target: next.target, value: next.value } });
         let result: { ok: boolean; error?: string };
-        if (action === "click" && step.target) {
-          result = await bt.browserClick(step.target);
-        } else if (action === "type" && step.target) {
-          result = await bt.browserType(step.target, step.value || "");
+        if (action === "click" && next.target) {
+          result = await bt.browserClick(next.target);
+        } else if (action === "type" && next.target) {
+          result = await bt.browserType(next.target, next.value || "");
         } else if (action === "scroll") {
           result = await bt.browserScroll("down");
-        } else if (action === "navigate" && step.target) {
-          result = await bt.browserNavigate(step.target).then((r) => ({ ok: r.ok, error: r.error }));
+        } else if (action === "navigate" && next.target) {
+          // Only honor navigation to a genuinely different URL.
+          const cur = (await bt.browserSnapshot().then((s) => s.url)) || "";
+          if (next.target === cur || next.target === url) {
+            emit("thinking_delta", { text: "Skipping redundant navigation to the current page." });
+            result = { ok: true };
+          } else {
+            result = await bt.browserNavigate(next.target).then((r) => ({ ok: r.ok, error: r.error }));
+          }
         } else if (action === "wait") {
-          result = await bt.browserWait(Number(step.value) || 2000);
+          result = await bt.browserWait(Number(next.value) || 2000);
         } else if (action === "dismiss") {
           result = await bt.browserDismissOverlay().then((r) => ({ ok: r.ok, dismissed: r.dismissed }));
         } else {
           result = { ok: false, error: `unsupported action: ${action}` };
         }
-        stepsExecuted += 1;
+
+        if (action !== "navigate") executed.push(next);
         emit("tool_result", { name: action, result: result.ok ? "ok" : result.error });
-        if (result.ok) {
-          stepsSucceeded += 1;
-        } else {
-          emit("thinking_delta", { text: `Step failed: ${result.error}` });
+        if (!result.ok) {
+          emit("thinking_delta", { text: `Step failed: ${result.error}. Will re-observe and retry.` });
         }
       }
 
-      // Success requires that the planned steps actually executed AND that the
-      // plan included at least one real interaction (type/click), not just
-      // meta-actions (dismiss/navigate/wait). A plan that only dismisses a
-      // dialog and waits did not verify the goal.
-      const meaningfulSteps = plan.filter(
+      // Success requires at least one real interaction (type/click) and that we
+      // did not exhaust turns without achieving the goal.
+      const meaningfulSteps = executed.filter(
         (s) => s.action === "type" || s.action === "click",
       ).length;
-      const allStepsOk = stepsExecuted === 0 ? false : stepsSucceeded === stepsExecuted;
-      success = allStepsOk && meaningfulSteps > 0;
+      if (turns >= maxTurns && !success) {
+        success = false;
+      }
+      success = success && meaningfulSteps > 0;
 
       // Only generate a Playwright test when the run actually succeeded.
       if (success) {
-        const code = await this.generateCode(goal, url, plan, emit);
+        const code = await this.generateCode(goal, url, executed, emit);
         generatedCode = code;
       }
     } catch (e: any) {
@@ -217,13 +238,14 @@ export class AgenticExecutor {
     return { success, trace, generatedCode };
   }
 
-  private async planBatch(
+  private async planNextStep(
     goal: string,
     assertions: Array<Record<string, any>>,
     currentUrl: string,
     elements: bt.SnapshotElement[],
+    history: PlanStep[],
     emit: EventSink,
-  ): Promise<PlanStep[]> {
+  ): Promise<PlanStep | null> {
     const elemLines = elements
       .map((e) => {
         const extra = e.editable ? ` [EDITABLE text field${e.inputType && e.inputType !== "text" ? ` type=${e.inputType}` : ""}]` : "";
@@ -231,33 +253,49 @@ export class AgenticExecutor {
       })
       .join("\n") || "(no interactive elements)";
     const assertLines = assertions.map((a) => `- ${a.type} ${a.target ?? ""}`).join("\n") || "(none)";
-    const prompt = `You are a test automation planner. Given a page and a goal, return a JSON array of steps to achieve the goal.
-Each step: {"action":"click|type|scroll|navigate|wait|dismiss", "target":"<element ref like [3]>", "value":"<text for type, or ms for wait>", "thought":"short reason"}.
+    const histLines = history.length
+      ? history.map((h, i) => `${i + 1}. ${h.action}${h.target ? ` ${h.target}` : ""}${h.value ? ` "${h.value}"` : ""}`).join("\n")
+      : "(none yet)";
+    const prompt = `You are an agentic test executor. Given the CURRENT page state, decide the SINGLE next action that makes progress toward the GOAL. Respond with ONE JSON object (not an array):
+{"action":"click|type|scroll|navigate|wait|dismiss|done", "target":"<element ref like [3]>", "value":"<text for type, or ms for wait>", "thought":"short reason"}
+- "done": only when the goal is fully achieved and verified (e.g. price/rating visible). Do NOT use done just because a dialog was dismissed.
 Available actions:
-- click: click an element (target ref) — only use on buttons/links/dropdowns, NOT on text fields
+- click: click an element (target ref) — only on buttons/links/dropdowns, NOT text fields
 - type: fill a text field (target ref + value) — target MUST be an [EDITABLE text field] element from ELEMENTS
 - scroll: scroll the page down
 - navigate: go to a DIFFERENT URL than the current one (target) — rarely needed
 - wait: pause for the page to settle (value = ms, e.g. 2000)
 - dismiss: close a visible modal/pop-up overlay (use first if a dialog is shown)
+- done: goal achieved
 RULES:
-- The browser is ALREADY on the goal page (CURRENT URL below). Do NOT emit a "navigate" step back to that same URL — you are already there. Only use "navigate" to go somewhere genuinely different.
-- If a modal/pop-up overlay is visible on the page, emit a "dismiss" step BEFORE trying to click anything behind it.
-- Use a [EDITABLE text field] element for any "type" step (e.g. search boxes). Do NOT type into buttons or links.
+- The browser is ALREADY on the goal page (CURRENT URL below). Do NOT navigate to that same URL.
+- If a modal/pop-up overlay is visible, choose "dismiss" as the next action.
+- Use an [EDITABLE text field] for any "type" step. Do NOT type into buttons or links.
 - Prefer elements whose name matches the goal (e.g. a search field for a destination query).
-- Produce a COMPLETE plan of concrete interactions (type into the search field, click search, wait, click a result, verify). Do not stop after dismissing a dialog.
-Only output the JSON array, no prose, no markdown.
+- Choose exactly ONE next action based on the CURRENT elements; do not repeat a step that just succeeded unless it makes new progress.
+Only output the JSON object, no prose, no markdown.
 
 GOAL: ${goal}
 CURRENT URL: ${currentUrl}
 ASSERTIONS: ${assertLines}
-ELEMENTS:
+ACTIONS TAKEN SO FAR:
+${histLines}
+CURRENT ELEMENTS:
 ${elemLines}`;
 
     const [_, out] = await this.llm.streamInfer(prompt, {
       onDelta: (kind, text) => emit("thinking_delta", { text, kind }),
-    }, 2048, 0);
-    return extractJsonArray(out);
+    }, 1024, 0);
+    const arr = extractJsonArray(out);
+    if (arr.length > 0) return arr[0];
+    // Some models return a bare object; try to parse one.
+    try {
+      const obj = JSON.parse(out.trim());
+      if (obj && typeof obj.action === "string") return obj as PlanStep;
+    } catch {
+      /* ignore */
+    }
+    return null;
   }
 
   private async generateCode(
