@@ -128,16 +128,17 @@ export class AgenticExecutor {
     let success = false;
 
     try {
-      const snap = await bt.browserSnapshot();
-      const elements = snap.interactive_elements ?? [];
-
       // Many sites show an intercepting modal/pop-up on load (Booking, etc.).
-      // Dismiss it once up front so the planner's element refs are accurate.
+      // Dismiss it up front, THEN snapshot, so the planner sees the real page
+      // and element refs are accurate (not the dismissed overlay's controls).
       if (await bt.hasOverlay()) {
         emit("thinking_delta", { text: "Detected an overlay/dialog; dismissing it before proceeding." });
         const d = await bt.browserDismissOverlay();
         if (d.dismissed) emit("tool_call", { name: "dismiss", arguments: {} });
       }
+
+      const snap = await bt.browserSnapshot();
+      const elements = snap.interactive_elements ?? [];
 
       const plan = await this.planBatch(goal, assertions, nav.url || url, elements, emit);
       if (plan.length === 0) {
@@ -188,14 +189,18 @@ export class AgenticExecutor {
         }
       }
 
-      // Success requires that the planned steps actually executed. If no steps
-      // were planned/run we still consider it a (degenerate) success; otherwise
-      // every executed step must have succeeded.
-      const allStepsOk = stepsExecuted === 0 ? true : stepsSucceeded === stepsExecuted;
-      success = allStepsOk;
+      // Success requires that the planned steps actually executed AND that the
+      // plan included at least one real interaction (type/click), not just
+      // meta-actions (dismiss/navigate/wait). A plan that only dismisses a
+      // dialog and waits did not verify the goal.
+      const meaningfulSteps = plan.filter(
+        (s) => s.action === "type" || s.action === "click",
+      ).length;
+      const allStepsOk = stepsExecuted === 0 ? false : stepsSucceeded === stepsExecuted;
+      success = allStepsOk && meaningfulSteps > 0;
 
       // Only generate a Playwright test when the run actually succeeded.
-      if (success && stepsExecuted > 0) {
+      if (success) {
         const code = await this.generateCode(goal, url, plan, emit);
         generatedCode = code;
       }
@@ -232,13 +237,15 @@ Available actions:
 - click: click an element (target ref) — only use on buttons/links/dropdowns, NOT on text fields
 - type: fill a text field (target ref + value) — target MUST be an [EDITABLE text field] element from ELEMENTS
 - scroll: scroll the page down
-- navigate: go to a URL (target)
+- navigate: go to a DIFFERENT URL than the current one (target) — rarely needed
 - wait: pause for the page to settle (value = ms, e.g. 2000)
 - dismiss: close a visible modal/pop-up overlay (use first if a dialog is shown)
 RULES:
+- The browser is ALREADY on the goal page (CURRENT URL below). Do NOT emit a "navigate" step back to that same URL — you are already there. Only use "navigate" to go somewhere genuinely different.
 - If a modal/pop-up overlay is visible on the page, emit a "dismiss" step BEFORE trying to click anything behind it.
 - Use a [EDITABLE text field] element for any "type" step (e.g. search boxes). Do NOT type into buttons or links.
 - Prefer elements whose name matches the goal (e.g. a search field for a destination query).
+- Produce a COMPLETE plan of concrete interactions (type into the search field, click search, wait, click a result, verify). Do not stop after dismissing a dialog.
 Only output the JSON array, no prose, no markdown.
 
 GOAL: ${goal}
