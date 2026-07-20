@@ -157,10 +157,20 @@ export async function browserClick(ref: string): Promise<{ ok: boolean; error?: 
   const target = lastElements[idx - 1];
   if (!target) return { ok: false, error: `no element at ${ref}` };
   try {
-    await target.click({ timeout: 10000 });
+    await target.click({ timeout: 10000, noWaitAfter: true });
+    // Give any navigation triggered by the click time to settle so the
+    // next snapshot reflects the new page rather than a half-loaded DOM.
+    await page!.waitForLoadState("domcontentloaded").catch(() => {});
     return { ok: true };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? String(e) };
+    const msg = (e?.message ?? String(e)) as string;
+    // If the element detached because the click navigated the page, the
+    // action succeeded — the page simply moved out from under the handle.
+    if (/not attached|detached|navigated|navigation/i.test(msg)) {
+      await page!.waitForLoadState("domcontentloaded").catch(() => {});
+      return { ok: true, error: "navigation" };
+    }
+    return { ok: false, error: msg };
   }
 }
 
