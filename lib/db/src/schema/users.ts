@@ -47,7 +47,7 @@ export const creditLedgerTable = pgTable("credit_ledger", {
   id: serial("id").primaryKey(),
   userId: text("user_id").notNull().references(() => usersTable.id),
   amount: integer("amount").notNull(),
-  reason: text("reason").notNull(),  // signup_bonus | run | purchase | subscription
+  reason: text("reason").notNull(),  // signup_bonus | run | purchase | subscription | refund_auth_failure | coupon_redemption | jira_import | copy_test
   runId: uuid("run_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -68,3 +68,36 @@ export const userApiKeysTable = pgTable("user_api_keys", {
 export const insertUserApiKeySchema = createInsertSchema(userApiKeysTable).omit({ id: true, createdAt: true });
 export type InsertUserApiKey = z.infer<typeof insertUserApiKeySchema>;
 export type UserApiKey = typeof userApiKeysTable.$inferSelect;
+
+/**
+ * Promo / coupon codes that grant credits when redeemed.
+ * A code can be single-use, multi-use (maxRedemptions), and optionally expire.
+ */
+export const couponsTable = pgTable("coupons", {
+  code: text("code").primaryKey(),                 // e.g. "LAUNCH20"
+  credits: integer("credits").notNull(),           // credits granted on redemption
+  description: text("description"),                // human-readable label
+  maxRedemptions: integer("max_redemptions"),      // null = unlimited
+  redemptions: integer("redemptions").notNull().default(0),
+  expiresAt: timestamp("expires_at"),              // null = never expires
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertCouponSchema = createInsertSchema(couponsTable);
+export type InsertCoupon = z.infer<typeof insertCouponSchema>;
+export type Coupon = typeof couponsTable.$inferSelect;
+
+/**
+ * Record of which user redeemed which coupon (prevents double-redeem).
+ */
+export const couponRedemptionsTable = pgTable("coupon_redemptions", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => usersTable.id),
+  code: text("code").notNull().references(() => couponsTable.code),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertCouponRedemptionSchema = createInsertSchema(couponRedemptionsTable).omit({ id: true, createdAt: true });
+export type InsertCouponRedemption = z.infer<typeof insertCouponRedemptionSchema>;
+export type CouponRedemption = typeof couponRedemptionsTable.$inferSelect;

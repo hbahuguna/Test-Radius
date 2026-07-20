@@ -104,6 +104,44 @@ export async function getCreditBalance(): Promise<CreditBalance> {
   return customFetch<CreditBalance>("/api/tester/credits");
 }
 
+export interface CouponPreview {
+  code: string;
+  credits: number;
+  description: string | null;
+  expired: boolean;
+}
+
+/**
+ * Preview a coupon's value before redeeming.
+ */
+export async function previewCoupon(code: string): Promise<CouponPreview> {
+  return customFetch<CouponPreview>(`/api/tester/coupons/${encodeURIComponent(code.trim().toUpperCase())}`);
+}
+
+/**
+ * Redeem a coupon code for the current user. Throws with code "insufficient_credits"
+ * style errors (not_found, expired, already_redeemed, max_reached, inactive) so the
+ * caller can surface a clear message.
+ */
+export async function redeemCoupon(code: string): Promise<{ ok: true; credits_granted: number }> {
+  const token = await getSessionToken();
+  const res = await fetch("/api/tester/coupons/redeem", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ code }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const e: any = new Error(err.message || "Failed to redeem coupon");
+    e.code = err.error || "coupon_error";
+    throw e;
+  }
+  return res.json();
+}
+
 /**
  * Spend 1 credit for a paid UI action (reason identifies it in the ledger).
  * Throws with code "insufficient_credits" when the user has no credits left
