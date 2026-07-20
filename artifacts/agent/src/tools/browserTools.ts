@@ -11,8 +11,12 @@ export interface SnapshotElement {
   role: string;
   name: string;
   ref: string;
+  /** For inputs: the input type (text/search/email/submit/...). */
+  inputType?: string;
+  /** True for elements that accept text input (input/textarea). */
+  editable?: boolean;
+  /** Short hint shown to the planner about what the element is. */
   description?: string;
-  context?: string;
 }
 
 export interface BrowserStartResult {
@@ -24,6 +28,8 @@ let browser: Browser | null = null;
 let context: BrowserContext | null = null;
 let page: Page | null = null;
 let elementCounter = 0;
+/** Handles from the most recent snapshot, so click/type resolve by the same index. */
+let lastElements: import("playwright").ElementHandle[] = [];
 
 export async function browserStart(headless = true): Promise<BrowserStartResult> {
   try {
@@ -63,25 +69,81 @@ function summarizeRole(tag: string): string {
   return t;
 }
 
+/** Rank so the planner's low indices are the most actionable elements. */
+function rank(el: SnapshotElement): number {
+  if (el.editable) return 0; // text fields first — usually the goal target
+  if (el.role === "combobox") return 1;
+  if (el.role === "button") return 2;
+  if (el.role === "link") return 3;
+  return 4;
+}
+
 export async function browserSnapshot(): Promise<{ ok: boolean; url?: string; interactive_elements?: SnapshotElement[]; error?: string }> {
   if (!page) return { ok: false, error: "browser not started" };
   try {
-    const elements = await page.$$("a, button, input, textarea, select, [role], img");
-    const interactive: SnapshotElement[] = [];
-    elementCounter = 0;
-    for (const h of elements) {
+    const raw = await page.$$("a, button, input, textarea, select, [role], img");
+    type Pair = { handle: import("playwright").ElementHandle; el: SnapshotElement };
+    // Skip elements nested inside a modal dialog — the executor dismisses those
+    // first and re-snapshots, so they should never be plan targets.
+    const inDialog = (h: import("playwright").ElementHandle): Promise<boolean> =>
+      h.evaluate((el) => !!el.closest('[role="dialog"], [aria-modal="true"]')).catch(() => false);
+    const pairs: Pair[] = [];
+    for (const h of raw) {
+      if (await inDialog(h)) continue;
       const tag = (await h.evaluate((el) => el.tagName)).toLowerCase();
       const role = (await h.getAttribute("role")) || summarizeRole(tag);
-      const name =
-        (await h.getAttribute("aria-label")) ||
-        (await h.getAttribute("name")) ||
-        (await h.getAttribute("placeholder")) ||
-        (await h.getAttribute("title")) ||
-        (await h.getAttribute("alt")) ||
-        (await h.innerText().catch(() => "")).slice(0, 60) ||
-        tag;
+      const editable = tag === "input" || tag === "textarea";
+      // Prefer the most specific semantic label; only fall back to visible
+      // text, and never let a giant text blob become the "name".
+      const ariaLabel = (await h.getAttribute("aria-label")) || "";
+      const nameAttr = (await h.getAttribute("name")) || "";
+      const placeholder = (await h.getAttribute("placeholder")) || "";
+      const title = (await h.getAttribute("title")) || "";
+      const alt = (await h.getAttribute("alt")) || "";
+      let name = ariaLabel || nameAttr || placeholder || title || alt;
+      if (!name) {
+        const txt = (await h.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+        // Skip elements whose only signal is long body copy (not a control).
+        if (txt.length > 0 && txt.length <= 40 && (role === "button" || role === "link" || role === "image")) {
+          name = txt;
+        } else if (editable) {
+          name = `${role}`;
+        } else {
+          continue; // noisy non-interactive element; exclude from snapshot
+        }
+      }
+      const inputType = editable ? (await h.getAttribute("type")) || "text" : undefined;
+      let description: string;
+      if (editable) description = `text field${inputType && inputType !== "text" ? ` (${inputType})` : ""}`;
+      else if (role === "button") description = `button`;
+      else if (role === "link") description = `link`;
+      else if (role === "combobox") description = `dropdown`;
+      else description = role;
+      pairs.push({
+        handle: h,
+        el: {
+          index: 0,
+          role,
+          name: String(name).slice(0, 60).trim(),
+          ref: "",
+          inputType,
+          editable,
+          description,
+        },
+      });
+    }
+
+    // Rank: editable fields first, then dropdowns, buttons, links, others.
+    pairs.sort((a, b) => rank(a.el) - rank(b.el) || a.el.name.localeCompare(b.el.name));
+
+    // Assign stable 1-based indices; keep handles in the same final order so
+    // click/type resolve by index against this exact list.
+    lastElements = pairs.map((p) => p.handle);
+    const interactive: SnapshotElement[] = [];
+    elementCounter = 0;
+    for (const p of pairs) {
       const ref = `[${++elementCounter}]`;
-      interactive.push({ index: elementCounter, role, name: String(name).trim(), ref });
+      interactive.push({ ...p.el, index: elementCounter, ref });
     }
     return { ok: true, url: page.url(), interactive_elements: interactive };
   } catch (e: any) {
@@ -92,8 +154,7 @@ export async function browserSnapshot(): Promise<{ ok: boolean; url?: string; in
 export async function browserClick(ref: string): Promise<{ ok: boolean; error?: string }> {
   if (!page) return { ok: false, error: "browser not started" };
   const idx = Number(ref.replace(/[\[\]]/g, ""));
-  const els = await page.$$("a, button, input, textarea, select, [role], img");
-  const target = els[idx - 1];
+  const target = lastElements[idx - 1];
   if (!target) return { ok: false, error: `no element at ${ref}` };
   try {
     await target.click({ timeout: 10000 });
@@ -106,8 +167,7 @@ export async function browserClick(ref: string): Promise<{ ok: boolean; error?: 
 export async function browserType(ref: string, text: string): Promise<{ ok: boolean; error?: string }> {
   if (!page) return { ok: false, error: "browser not started" };
   const idx = Number(ref.replace(/[\[\]]/g, ""));
-  const els = await page.$$("a, button, input, textarea, select, [role], img");
-  const target = els[idx - 1];
+  const target = lastElements[idx - 1];
   if (!target) return { ok: false, error: `no element at ${ref}` };
   try {
     await target.fill(text, { timeout: 10000 });
@@ -209,5 +269,6 @@ export async function browserClose(): Promise<void> {
     page = null;
     context = null;
     browser = null;
+    lastElements = [];
   }
 }

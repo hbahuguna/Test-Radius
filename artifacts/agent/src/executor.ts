@@ -220,19 +220,26 @@ export class AgenticExecutor {
     emit: EventSink,
   ): Promise<PlanStep[]> {
     const elemLines = elements
-      .map((e) => `- ${e.ref} ${e.role}|${e.name}`)
+      .map((e) => {
+        const extra = e.editable ? ` [EDITABLE text field${e.inputType && e.inputType !== "text" ? ` type=${e.inputType}` : ""}]` : "";
+        return `- ${e.ref} ${e.role}|${e.name}${extra}`;
+      })
       .join("\n") || "(no interactive elements)";
     const assertLines = assertions.map((a) => `- ${a.type} ${a.target ?? ""}`).join("\n") || "(none)";
     const prompt = `You are a test automation planner. Given a page and a goal, return a JSON array of steps to achieve the goal.
 Each step: {"action":"click|type|scroll|navigate|wait|dismiss", "target":"<element ref like [3]>", "value":"<text for type, or ms for wait>", "thought":"short reason"}.
 Available actions:
-- click: click an element (target ref)
-- type: fill an input/textarea (target ref + value)
+- click: click an element (target ref) — only use on buttons/links/dropdowns, NOT on text fields
+- type: fill a text field (target ref + value) — target MUST be an [EDITABLE text field] element from ELEMENTS
 - scroll: scroll the page down
 - navigate: go to a URL (target)
 - wait: pause for the page to settle (value = ms, e.g. 2000)
 - dismiss: close a visible modal/pop-up overlay (use first if a dialog is shown)
-IMPORTANT: If a modal/pop-up overlay is visible on the page, emit a "dismiss" step BEFORE trying to click anything behind it. Only output the JSON array, no prose, no markdown.
+RULES:
+- If a modal/pop-up overlay is visible on the page, emit a "dismiss" step BEFORE trying to click anything behind it.
+- Use a [EDITABLE text field] element for any "type" step (e.g. search boxes). Do NOT type into buttons or links.
+- Prefer elements whose name matches the goal (e.g. a search field for a destination query).
+Only output the JSON array, no prose, no markdown.
 
 GOAL: ${goal}
 CURRENT URL: ${currentUrl}
