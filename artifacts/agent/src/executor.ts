@@ -130,10 +130,22 @@ export class AgenticExecutor {
     try {
       const snap = await bt.browserSnapshot();
       const elements = snap.interactive_elements ?? [];
+
+      // Many sites show an intercepting modal/pop-up on load (Booking, etc.).
+      // Dismiss it once up front so the planner's element refs are accurate.
+      if (await bt.hasOverlay()) {
+        emit("thinking_delta", { text: "Detected an overlay/dialog; dismissing it before proceeding." });
+        const d = await bt.browserDismissOverlay();
+        if (d.dismissed) emit("tool_call", { name: "dismiss", arguments: {} });
+      }
+
       const plan = await this.planBatch(goal, assertions, nav.url || url, elements, emit);
       if (plan.length === 0) {
         emit("thinking_delta", { text: "No actionable steps planned; reporting current state." });
       }
+
+      let stepsSucceeded = 0;
+      let stepsExecuted = 0;
 
       for (const step of plan) {
         if (stopRequested) {
@@ -141,6 +153,14 @@ export class AgenticExecutor {
           emit("done", { success: false, error: "stopped by user", trace, stopped: true });
           return { success: false, trace, error: "stopped by user", stopped: true };
         }
+
+        // Re-check for an overlay before each action; clicks can re-trigger one.
+        if (await bt.hasOverlay()) {
+          emit("thinking_delta", { text: "Overlay reappeared; dismissing before next action." });
+          const d = await bt.browserDismissOverlay();
+          if (d.dismissed) emit("tool_call", { name: "dismiss", arguments: {} });
+        }
+
         const action = step.action || "fail";
         emit("tool_call", { name: action, arguments: { target: step.target, value: step.value } });
         let result: { ok: boolean; error?: string };
@@ -152,19 +172,33 @@ export class AgenticExecutor {
           result = await bt.browserScroll("down");
         } else if (action === "navigate" && step.target) {
           result = await bt.browserNavigate(step.target).then((r) => ({ ok: r.ok, error: r.error }));
+        } else if (action === "wait") {
+          result = await bt.browserWait(Number(step.value) || 2000);
+        } else if (action === "dismiss") {
+          result = await bt.browserDismissOverlay().then((r) => ({ ok: r.ok, dismissed: r.dismissed }));
         } else {
           result = { ok: false, error: `unsupported action: ${action}` };
         }
+        stepsExecuted += 1;
         emit("tool_result", { name: action, result: result.ok ? "ok" : result.error });
-        if (!result.ok) {
+        if (result.ok) {
+          stepsSucceeded += 1;
+        } else {
           emit("thinking_delta", { text: `Step failed: ${result.error}` });
         }
       }
 
-      // Generate a Playwright test from the run.
-      const code = await this.generateCode(goal, url, plan, emit);
-      generatedCode = code;
-      success = true;
+      // Success requires that the planned steps actually executed. If no steps
+      // were planned/run we still consider it a (degenerate) success; otherwise
+      // every executed step must have succeeded.
+      const allStepsOk = stepsExecuted === 0 ? true : stepsSucceeded === stepsExecuted;
+      success = allStepsOk;
+
+      // Only generate a Playwright test when the run actually succeeded.
+      if (success && stepsExecuted > 0) {
+        const code = await this.generateCode(goal, url, plan, emit);
+        generatedCode = code;
+      }
     } catch (e: any) {
       const msg = e?.message ?? String(e);
       emit("error", { message: msg });
@@ -190,8 +224,15 @@ export class AgenticExecutor {
       .join("\n") || "(no interactive elements)";
     const assertLines = assertions.map((a) => `- ${a.type} ${a.target ?? ""}`).join("\n") || "(none)";
     const prompt = `You are a test automation planner. Given a page and a goal, return a JSON array of steps to achieve the goal.
-Each step: {"action":"click|type|scroll|navigate|wait", "target":"<element ref like [3]>", "value":"<text for type>", "thought":"short reason"}.
-Only output the JSON array, no prose, no markdown.
+Each step: {"action":"click|type|scroll|navigate|wait|dismiss", "target":"<element ref like [3]>", "value":"<text for type, or ms for wait>", "thought":"short reason"}.
+Available actions:
+- click: click an element (target ref)
+- type: fill an input/textarea (target ref + value)
+- scroll: scroll the page down
+- navigate: go to a URL (target)
+- wait: pause for the page to settle (value = ms, e.g. 2000)
+- dismiss: close a visible modal/pop-up overlay (use first if a dialog is shown)
+IMPORTANT: If a modal/pop-up overlay is visible on the page, emit a "dismiss" step BEFORE trying to click anything behind it. Only output the JSON array, no prose, no markdown.
 
 GOAL: ${goal}
 CURRENT URL: ${currentUrl}

@@ -137,6 +137,69 @@ export async function browserScreenshot(): Promise<{ ok: boolean; screenshot?: s
   }
 }
 
+/**
+ * Wait for navigation/network to settle (or a fixed delay as a fallback).
+ */
+export async function browserWait(ms = 1500): Promise<{ ok: boolean; error?: string }> {
+  if (!page) return { ok: false, error: "browser not started" };
+  try {
+    await page.waitForLoadState("networkidle", { timeout: ms }).catch(() => {});
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? String(e) };
+  }
+}
+
+/**
+ * Try to close a visible modal / pop-up overlay. Many sites (Booking, etc.)
+ * show an intercepting dialog on load. We try, in order:
+ *   1. a visible [aria-label*="close"], [aria-label*="dismiss"], or button with
+ *      text Close / Accept / X / ✕
+ *   2. pressing Escape
+ * Returns ok:true if it thinks it dismissed something (best-effort).
+ */
+export async function browserDismissOverlay(): Promise<{ ok: boolean; dismissed: boolean; error?: string }> {
+  if (!page) return { ok: false, dismissed: false, error: "browser not started" };
+  try {
+    const selectors = [
+      '[aria-label*="close" i]',
+      '[aria-label*="dismiss" i]',
+      '[aria-label*="Close" i]',
+      'button[class*="close"]',
+      'div[role="dialog"] button',
+    ];
+    for (const sel of selectors) {
+      const btn = page.locator(sel).filter({ visible: true }).first();
+      if (await btn.count()) {
+        await btn.click({ timeout: 3000 }).catch(() => {});
+        return { ok: true, dismissed: true };
+      }
+    }
+    // Fall back to Escape; if a dialog was open this closes it.
+    await page.keyboard.press("Escape").catch(() => {});
+    return { ok: true, dismissed: false };
+  } catch (e: any) {
+    return { ok: false, dismissed: false, error: e?.message ?? String(e) };
+  }
+}
+
+/**
+ * Detect whether an overlay/dialog is currently intercepting the page.
+ */
+export async function hasOverlay(): Promise<boolean> {
+  if (!page) return false;
+  try {
+    const dialog = page.locator('[role="dialog"]').filter({ visible: true }).first();
+    if (await dialog.count()) return true;
+    const trap = page.locator('[data-bui-trap-root], [data-testid*="overlay"], [aria-modal="true"]')
+      .filter({ visible: true })
+      .first();
+    return (await trap.count()) > 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function browserClose(): Promise<void> {
   try {
     if (page) await page.close().catch(() => {});
