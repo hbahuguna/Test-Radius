@@ -25,6 +25,7 @@ export const PROVIDERS: { id: string; label: string }[] = [
 export const PROVIDER_MODELS: Record<string, ProviderModel[]> = {
   opencode: [
     { id: "hy3-free", label: "hy3-free" },
+    { id: "big-pickle", label: "big-pickle" },
     { id: "claude-3-5-sonnet", label: "Claude 3.5 Sonnet" },
     { id: "gpt-4o", label: "GPT-4o" },
   ],
