@@ -305,7 +305,7 @@ export class AgenticExecutor {
       : "(none yet)";
     const prompt = `You are an agentic test executor. Given the CURRENT page state, decide the SINGLE next action that makes progress toward the GOAL. Respond with ONE JSON object (not an array):
 {"action":"click|type|scroll|navigate|wait|dismiss|done", "target":"<element ref like [3]>", "value":"<text for type, or ms for wait>", "thought":"short reason"}
-- "done": only when the goal is fully achieved and verified (e.g. price/rating visible). Do NOT use done just because a dialog was dismissed.
+- "done": ONLY when the ENTIRE goal is achieved and every requirement is verified visible on the current page. NEVER say done if the goal has multiple parts (e.g. "search, wait, open, verify") and not ALL parts are confirmed. Filling a form field is NOT completion — you must trigger the search, wait for results, and verify the expected data.
 Available actions:
 - click: click an element (target ref) — only on buttons/links/dropdowns, NOT text fields
 - type: fill a text field (target ref + value) — target MUST be an [EDITABLE text field] element from ELEMENTS
@@ -319,6 +319,7 @@ RULES:
 - If a modal/pop-up overlay is visible, choose "dismiss" as the next action.
 - Use an [EDITABLE text field] for any "type" step. Do NOT type into buttons or links.
 - Prefer elements whose name matches the goal (e.g. a search field for a destination query).
+- For multi-step goals (search → wait → open → verify), execute each step in order. After filling form fields, look for a search/submit/explore button to trigger the action. Do NOT say done after just filling fields.
 - Choose exactly ONE next action based on the CURRENT elements; do not repeat a step that just succeeded unless it makes new progress.
 - Element refs (like [3]) are ONLY valid for THIS turn's CURRENT ELEMENTS. NEVER reuse a ref you picked in a previous turn — every turn, pick a fresh ref from the list shown above. If the page changed after a click/navigation, the elements are new.
 - After you click a link/button that opens a new page (e.g. a course result), the NEXT turn's CURRENT ELEMENTS will be that new page. Perform verification (enrollment/start option, description) on the NEW page, not by clicking the same result again.
