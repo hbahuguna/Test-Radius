@@ -339,9 +339,15 @@ ${elemLines}`;
 
     const [_, out] = await this.llm.streamInfer(prompt, {
       onDelta: (kind, text) => emit("thinking_delta", { text, kind }),
-    }, 1024, 0);
+    }, 2048, 0, "You are a test executor. Output ONLY a single JSON action object. Never output 'done' unless every goal requirement is confirmed visible on the page.");
     const step = extractJsonObject(out);
-    if (step && typeof step.action === "string") return step;
+    if (step && typeof step.action === "string" && step.action !== "done") return step;
+    // If the model returned "done" but no real actions (type/click) have been
+    // taken yet, treat it as a premature misparse — force a re-observe.
+    if (step && step.action === "done") {
+      const hasInteraction = history.some((h) => h.action === "type" || h.action === "click");
+      if (!hasInteraction) return null;
+    }
     return null;
   }
 

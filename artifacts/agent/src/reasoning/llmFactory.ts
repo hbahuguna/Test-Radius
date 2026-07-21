@@ -52,11 +52,12 @@ export class LLMFactory {
     cb: StreamCallbacks,
     maxTokens = 1024,
     temperature = 0,
+    system?: string,
   ): Promise<[string | null, string]> {
     for (const { name, client } of this.clients) {
       if (client.health && !client.health()) continue;
       try {
-        const full = await client.streamInfer(prompt, cb, maxTokens, temperature);
+        const full = await client.streamInfer(prompt, cb, maxTokens, temperature, system);
         if (full && !isErrorText(full)) return [name, full];
         // eslint-disable-next-line no-console
         console.warn(`[llm_factory] ${name} returned an error: ${full.slice(0, 120)}`);
