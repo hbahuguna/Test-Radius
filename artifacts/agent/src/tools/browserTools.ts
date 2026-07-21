@@ -112,6 +112,17 @@ export async function browserSnapshot(): Promise<{ ok: boolean; url?: string; in
           continue; // noisy non-interactive element; exclude from snapshot
         }
       }
+      // Filter out noise: timestamps ("2 hours ago") and comment counts
+      // ("139 comments") clutter the snapshot without helping the planner.
+      if (role === "link" && name) {
+        if (/^\d+\s+(?:hour|minute|second|day|week|month|year)s?\s+ago$/i.test(name)) continue;
+        if (/^\d+\s+comments?$/i.test(name)) continue;
+        // Domain-only links ("github.com", "nytimes.com") are source indicators,
+        // not primary story links — annotate so the planner doesn't click them.
+        if (/^[a-z0-9-]+(?:\.[a-z]{2,})+$/i.test(name)) {
+          name = `${name} (source domain)`;
+        }
+      }
       const inputType = editable ? (await h.getAttribute("type")) || "text" : undefined;
       let description: string;
       if (editable) description = `text field${inputType && inputType !== "text" ? ` (${inputType})` : ""}`;
