@@ -67,7 +67,9 @@ export async function streamRun(
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    throw new Error(err.message || `Run failed (${response.status})`);
+    const e: any = new Error(err.message || `Run failed (${response.status})`);
+    e.code = err.error || null;
+    throw e;
   }
 
   const reader = response.body!.getReader();

@@ -199,7 +199,15 @@ export function Tester() {
         setStatus("stopped");
       } else {
         setStatus("failed");
-        toast.error(err?.message || "Run failed");
+        if (err?.code === "insufficient_credits") {
+          toast.error("No credits remaining. Redirecting to Settings…");
+          setTimeout(() => navigate("/settings"), 1200);
+        } else if (err?.code === "no_api_key") {
+          toast.error(err?.message || "No API key configured. Redirecting to Settings…");
+          setTimeout(() => navigate("/settings"), 1200);
+        } else {
+          toast.error(err?.message || "Run failed");
+        }
       }
     } finally {
       if (screenshotTimer.current) clearInterval(screenshotTimer.current);
