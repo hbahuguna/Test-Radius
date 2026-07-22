@@ -53,8 +53,8 @@ export function DocsPage({ slug = "" }: DocsPageProps) {
         }
 
         const loader = modules[matchKey];
-        const rawContent = await loader();
-        const content = rawContent.default || rawContent;
+        const rawContent = (await loader()) as { default?: string };
+        const content = rawContent.default || (rawContent as unknown as string);
 
         const lines = content.split("\n");
         let bodyStartIndex = 0;

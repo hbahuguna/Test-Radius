@@ -7,7 +7,7 @@
     "moduleResolution": "Bundler",
     "types": ["node"],
     "declaration": true,
-    "composite": true
+    "composite": false
   },
   "include": ["src"]
 }

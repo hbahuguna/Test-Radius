@@ -3,8 +3,23 @@ modules = ["nodejs-24"]
 [deployment]
 router = "application"
 deploymentTarget = "autoscale"
-build = "PORT=3000 BASE_PATH=/ pnpm --filter @workspace/testradius build"
+build = "PORT=3000 BASE_PATH=/ VITE_SUPABASE_URL=https://jimfkyiwtbzggmleolnw.supabase.co VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImppbWZreWl3dGJ6Z2dtbGVvbG53Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzODY0MzAsImV4cCI6MjA4ODk2MjQzMH0.OBAAe-bjIX-6z4ajIKpWpA9NiaT6IsGWyxZKlpggwKU pnpm --filter @workspace/testradius build && pnpm --filter @workspace/api-server build"
+run = "PORT=3000 PUBLIC_DIR=artifacts/testradius/dist pnpm --filter @workspace/api-server run start"
 static = "artifacts/testradius/dist"
+
+[deployment.env]
+SUPABASE_URL = "https://jimfkyiwtbzggmleolnw.supabase.co"
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImppbWZreWl3dGJ6Z2dtbGVvbG53Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzODY0MzAsImV4cCI6MjA4ODk2MjQzMH0.OBAAe-bjIX-6z4ajIKpWpA9NiaT6IsGWyxZKlpggwKU"
+SUPABASE_JWT_SECRET = "62017e07-d69b-4f35-9af0-056030f42c38"
+SDET_AGENT_URL = "http://localhost:8006"
+ENCRYPTION_KEY = "a7f3e9c2b1d48e6f0a5c3b9d7e2f1a4c6b8d0e3f5a7c9b1d4e6f8a0c2b4d"
+DATABASE_URL = ""
+STRIPE_SECRET_KEY = ""
+STRIPE_WEBHOOK_SECRET = ""
+STRIPE_PRICE_PRO_MONTHLY = "price_pro_monthly"
+STRIPE_PRICE_CREDIT_PACK_10 = "price_credit_pack_10"
+STRIPE_PRICE_CREDIT_PACK_50 = "price_credit_pack_50"
+STRIPE_PRICE_CREDIT_PACK_200 = "price_credit_pack_200"
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]

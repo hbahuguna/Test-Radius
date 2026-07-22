@@ -19,6 +19,8 @@ export const PROVIDERS: { id: string; label: string }[] = [
   { id: "openai", label: "OpenAI key" },
   { id: "anthropic", label: "Anthropic key" },
   { id: "google", label: "Google key" },
+  { id: "openrouter", label: "OpenRouter key" },
+  { id: "poolside", label: "Poolside key (Laguna XS 2.1)" },
 ];
 
 // Curated model lists per provider. The first entry is the default.
@@ -47,6 +49,18 @@ export const PROVIDER_MODELS: Record<string, ProviderModel[]> = {
     { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite" },
     { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
   ],
+  openrouter: [
+    { id: "poolside/laguna-xs-2.1", label: "Laguna XS 2.1" },
+    { id: "poolside/sonar", label: "Sonar" },
+    { id: "poolside/hermes-3", label: "Hermes 3" },
+    { id: "poolside/laguna", label: "Laguna" },
+  ],
+  poolside: [
+    { id: "poolside/laguna-xs-2.1", label: "Laguna XS 2.1 (default)" },
+    { id: "poolside/sonar", label: "Sonar" },
+    { id: "poolside/hermes-3", label: "Hermes 3" },
+    { id: "poolside/laguna", label: "Laguna" },
+  ],
 };
 
 export function defaultModelFor(provider: string): string {
@@ -68,7 +82,7 @@ export function ModelSelector({
   onModelIdChange,
   keys,
 }: ModelSelectorProps) {
-  const hasKey = (p: string) => keys.some((k) => k.provider === p);
+  const hasKey = (p: string) => (keys ?? []).some((k) => k.provider === p);
   const models = PROVIDER_MODELS[provider] ?? [];
 
   return (

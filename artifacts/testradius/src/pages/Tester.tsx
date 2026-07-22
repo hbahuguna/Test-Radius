@@ -10,6 +10,7 @@ import { RunForm } from "@/components/tester/RunForm";
 import { defaultModelFor } from "@/components/tester/ModelSelector";
 import { LiveProgress, type StepEvent } from "@/components/tester/LiveProgress";
 import { RunHistory } from "@/components/tester/RunHistory";
+import { InlineChat } from "@/components/tester/InlineChat";
 import {
   streamRun,
   stopRun,
@@ -40,6 +41,7 @@ export function Tester() {
   ]);
   const [model, setModel] = useState("opencode");
   const [modelId, setModelId] = useState<string>(defaultModelFor("opencode"));
+  const [mode, setMode] = useState<"reactive" | "planned">("reactive");
 
   const [credits, setCredits] = useState<CreditBalance | null>(null);
   const [keys, setKeys] = useState<UserApiKey[]>([]);
@@ -53,6 +55,7 @@ export function Tester() {
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const screenshotTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -110,6 +113,7 @@ export function Tester() {
     setThoughts([]);
     setGeneratedCode(null);
     setScreenshot(null);
+    setRunError(null);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -138,6 +142,7 @@ export function Tester() {
           goal,
           assertions: cleanedAssertions,
           headless: true,
+          mode,
           model_provider: model,
           model: modelId,
         },
@@ -188,8 +193,10 @@ export function Tester() {
               setStatus(e.success ? "done" : "failed");
               setSuccess(Boolean(e.success));
               if (typeof e.generated_code === "string") setGeneratedCode(e.generated_code);
+              if (!e.success && typeof e.error === "string") setRunError(e.error);
             } else if (e.event === "error") {
               setStatus("failed");
+              if (typeof e.message === "string") setRunError(e.message);
             }
           },
         },
@@ -283,6 +290,7 @@ export function Tester() {
                   assertions={assertions}
                   model={model}
                   modelId={modelId}
+                  mode={mode}
                   keys={keys}
                   loading={running}
                   onUrlChange={setUrl}
@@ -290,6 +298,7 @@ export function Tester() {
                   onAssertionsChange={setAssertions}
                   onModelChange={setModel}
                   onModelIdChange={setModelId}
+                  onModeChange={setMode}
                   onRun={handleRun}
                 />
                 {running && (
@@ -312,6 +321,12 @@ export function Tester() {
                   status={status}
                   success={success}
                 />
+                {runError && status === "failed" && (
+                  <div className="mt-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+                    <p className="text-sm font-medium text-destructive mb-1">Error</p>
+                    <p className="text-sm text-destructive/80 font-mono whitespace-pre-wrap">{runError}</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -357,8 +372,27 @@ export function Tester() {
                   status={status}
                   success={success}
                 />
+                {runError && status === "failed" && (
+                  <div className="mt-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+                    <p className="text-sm font-medium text-destructive mb-1">Failure Reason</p>
+                    <p className="text-sm text-destructive/80 font-mono whitespace-pre-wrap">{runError}</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
+
+            {/* Inline chat — show after run completes or fails */}
+            {(status === "done" || status === "failed" || status === "stopped") && (
+              <InlineChat
+                goal={goal}
+                url={url}
+                steps={steps.map((s) => ({ name: s.action || "unknown", args: { target: s.target }, result: s.detail }))}
+                thoughts={thoughts}
+                runError={runError}
+                modelProvider={model}
+                modelId={modelId}
+              />
+            )}
           </div>
         </div>
 

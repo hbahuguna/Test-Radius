@@ -26,6 +26,8 @@ const PROVIDERS = [
   { id: "openai", label: "OpenAI" },
   { id: "anthropic", label: "Anthropic" },
   { id: "google", label: "Google" },
+  { id: "openrouter", label: "OpenRouter" },
+  { id: "poolside", label: "Poolside (Laguna XS 2.1)" },
 ];
 
 export function Settings() {
@@ -41,7 +43,7 @@ export function Settings() {
   const [couponBusy, setCouponBusy] = useState(false);
   const [couponMsg, setCouponMsg] = useState<string | null>(null);
 
-  const jiraKey = keys.find((k) => k.provider === "jira");
+  const jiraKey = (keys ?? []).find((k) => k.provider === "jira");
   const [jiraBase, setJiraBase] = useState("");
   const [jiraEmail, setJiraEmail] = useState("");
   const [jiraToken, setJiraToken] = useState("");
@@ -66,15 +68,15 @@ export function Settings() {
     }
   };
 
-  const load = async () => {
-    try {
-      const [k, c] = await Promise.all([getApiKeys(), getCreditBalance()]);
-      setKeys(k);
-      setCredits(c);
-    } catch {
-      toast.error("Failed to load settings");
-    }
-  };
+const load = async () => {
+  try {
+    const [k, c] = await Promise.all([getApiKeys(), getCreditBalance()]);
+    setKeys(k ?? []);
+    setCredits(c ?? null);
+  } catch {
+    toast.error("Failed to load settings");
+  }
+};
 
   useEffect(() => {
     load();
@@ -254,7 +256,7 @@ export function Settings() {
               {keys.length === 0 && (
                 <p className="text-sm text-muted-foreground">No API keys saved yet.</p>
               )}
-              {keys.map((k) => (
+              {keys?.map((k) => (
                 <div key={k.id} className="flex items-center justify-between border rounded-md p-3">
                   <div>
                     <span className="font-medium capitalize">{k.provider}</span>

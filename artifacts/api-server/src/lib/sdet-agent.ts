@@ -1,6 +1,6 @@
 import type { Response } from "express";
 import { logger } from "../lib/logger";
-import { runStream, stopRun, getScreenshot } from "@workspace/agent";
+import { runStream, stopRun, getScreenshot, ByokClient, chatAgentTurn, type ChatContext } from "@workspace/agent";
 
 export interface AgenticRequestBody {
   url: string;
@@ -14,11 +14,14 @@ export interface AgenticRequestBody {
   }>;
   headless?: boolean;
   max_turns?: number;
+  mode?: "reactive" | "planned";
   // BYOK model override keys (plaintext, passed through from decrypted vault)
   openai_api_key?: string;
   anthropic_api_key?: string;
   google_api_key?: string;
   opencode_api_key?: string;
+  openrouter_api_key?: string;
+  poolside_api_key?: string;
   model_provider?: string;
   model?: string;
 }
@@ -27,6 +30,7 @@ export interface AgenticRunSummary {
   success: boolean | null;
   error: string | null;
   assertions: unknown;
+  assertionResults: Array<{ index: number; pass: boolean; reason: string }> | null;
   generatedCode: string | null;
 }
 
@@ -45,6 +49,8 @@ export async function proxyAgenticStream(
   if (body.anthropic_api_key) byok.anthropic = body.anthropic_api_key;
   if (body.google_api_key) byok.google = body.google_api_key;
   if (body.opencode_api_key) byok.opencode = body.opencode_api_key;
+  if (body.openrouter_api_key) byok.openrouter = body.openrouter_api_key;
+  if (body.poolside_api_key) byok.poolside = body.poolside_api_key;
 
   const input = {
     goal: body.goal,
@@ -52,6 +58,7 @@ export async function proxyAgenticStream(
     assertions: body.assertions ?? [],
     headless: body.headless ?? true,
     maxTurns: body.max_turns ?? 30,
+    mode: body.mode ?? "reactive",
     byok: Object.keys(byok).length ? byok : null,
     model: body.model ?? null,
   };
@@ -66,6 +73,7 @@ export async function proxyAgenticStream(
     success: null,
     error: null,
     assertions: null,
+    assertionResults: null,
     generatedCode: null,
   };
 
@@ -78,6 +86,7 @@ export async function proxyAgenticStream(
           summary.success = Boolean(evt.success);
           summary.error = typeof evt.error === "string" ? evt.error : null;
           summary.assertions = evt.trace?.assertions ?? null;
+          summary.assertionResults = Array.isArray(evt.assertion_results) ? evt.assertion_results : null;
           summary.generatedCode =
             typeof evt.generated_code === "string" ? evt.generated_code : null;
         }
@@ -103,4 +112,42 @@ export async function getAgentScreenshot(): Promise<Buffer | null> {
   const r = await getScreenshot();
   if (!r?.screenshot) return null;
   return Buffer.from(r.screenshot, "base64");
+}
+
+/**
+ * Run an agentic chat turn: user message → browser actions → report.
+ * Uses the same browser session as the agent.
+ */
+export async function* streamChatResponse(
+  message: string,
+  context: string,
+  byok: Record<string, string>,
+  model: string | null,
+  url: string | null,
+): AsyncGenerator<string, void, unknown> {
+  const providers = Object.entries(byok).map(([provider, apiKey]) => {
+    return new ByokClient(provider, apiKey, model ?? undefined);
+  });
+
+  if (providers.length === 0) {
+    yield "No LLM provider available. Add an API key in Settings.";
+    return;
+  }
+
+  const client = providers[0];
+
+  // Parse URL and goal from context string
+  const parsedUrl = url || "https://example.com";
+  const goal = context || "User is chatting about a test run";
+
+  const chatContext: ChatContext = {
+    url: parsedUrl,
+    goal,
+    messages: [],
+  };
+
+  // Run the agentic chat turn
+  for await (const token of chatAgentTurn(message, chatContext, client)) {
+    yield token;
+  }
 }

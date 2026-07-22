@@ -39,12 +39,59 @@ export async function browserStart(headless = true): Promise<BrowserStartResult>
     if (!context) {
       context = await browser.newContext();
     }
-    if (!page) {
+    if (!page || page.isClosed()) {
       page = await context.newPage();
     }
     return { status: "ok" };
   } catch (e: any) {
     return { status: "error", error: e?.message ?? String(e) };
+  }
+}
+
+/** Check if the current page is still alive and responsive. */
+export async function browserIsAlive(): Promise<boolean> {
+  if (!page || page.isClosed()) return false;
+  try {
+    await page.evaluate(() => 1);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Recover from a dead page/browser. If the context is still alive, get
+ * the current page from it (Google Flights SPA navigation replaces pages).
+ * Only re-launch if the context is also dead.
+ */
+export async function browserRecover(url: string, headless = true): Promise<boolean> {
+  try {
+    // Check if context is still alive — SPA navigations kill the page but
+    // the context (and browser) remain. Get the active page from it.
+    if (context) {
+      try {
+        const pages = context.pages();
+        if (pages.length > 0) {
+          page = pages[pages.length - 1]; // use the most recent page
+          if (!page.isClosed()) {
+            return true;
+          }
+        }
+      } catch {}
+    }
+    // Context is dead too — full re-launch
+    page = null;
+    context = null;
+    if (browser) {
+      try { await browser.close(); } catch {}
+      browser = null;
+    }
+    const start = await browserStart(headless);
+    if (start.status !== "ok") return false;
+    const nav = await browserNavigate(url);
+    return nav.ok;
+  } catch {
+    return false;
   }
 }
 
@@ -71,11 +118,12 @@ function summarizeRole(tag: string): string {
 
 /** Rank so the planner's low indices are the most actionable elements. */
 function rank(el: SnapshotElement): number {
-  if (el.editable) return 0; // text fields first — usually the goal target
+  if (el.editable) return 0; // text fields and dialog inputs — highest priority
   if (el.role === "combobox") return 1;
-  if (el.role === "button") return 2;
-  if (el.role === "link") return 3;
-  return 4;
+  if (el.role === "option") return 2; // dropdown suggestions — click AFTER typing
+  if (el.role === "button") return 3;
+  if (el.role === "link") return 4;
+  return 5;
 }
 
 export async function browserSnapshot(): Promise<{ ok: boolean; url?: string; interactive_elements?: SnapshotElement[]; error?: string }> {
@@ -83,16 +131,36 @@ export async function browserSnapshot(): Promise<{ ok: boolean; url?: string; in
   try {
     const raw = await page.$$("a, button, input, textarea, select, [role], img");
     type Pair = { handle: import("playwright").ElementHandle; el: SnapshotElement };
-    // Skip elements nested inside a modal dialog — the executor dismisses those
-    // first and re-snapshots, so they should never be plan targets.
-    const inDialog = (h: import("playwright").ElementHandle): Promise<boolean> =>
-      h.evaluate((el) => !!el.closest('[role="dialog"], [aria-modal="true"]')).catch(() => false);
     const pairs: Pair[] = [];
+    // When a dialog is open (e.g. Google Flights origin picker), only show
+    // elements INSIDE the dialog. Background elements ( Departure, Return,
+    // etc.) are non-interactive and would confuse the planner.
+    const dialogOpen = await page.locator('[role="dialog"]:visible').count() > 0;
     for (const h of raw) {
-      if (await inDialog(h)) continue;
+      // Skip elements that have zero dimensions (hidden behind dropdowns,
+      // collapsed, or offscreen). Use bounding box rather than isVisible()
+      // because isVisible() checks CSS display/visibility which can be
+      // overly aggressive for elements that are technically visible but
+      // have zero size (e.g. hidden comboboxes behind a dialog).
+      try {
+        const box = await h.boundingBox();
+        if (!box || box.width === 0 || box.height === 0) continue;
+      } catch {
+        continue; // detached or errored — skip
+      }
+      // When a dialog is open, skip elements that are NOT inside it.
+      // They're background UI and non-interactive.
+      if (dialogOpen) {
+        const inDialog = await h.evaluate((el) => !!el.closest('[role="dialog"]')).catch(() => false);
+        if (!inDialog) continue;
+      }
       const tag = (await h.evaluate((el) => el.tagName)).toLowerCase();
       const role = (await h.getAttribute("role")) || summarizeRole(tag);
       const editable = tag === "input" || tag === "textarea";
+      // ARIA comboboxes (e.g. Google Flights) are editable too — they accept
+      // typed input after a click opens the dropdown.
+      const isCombobox = role === "combobox";
+      if (isCombobox) { /* comboboxes are interactable even if not native inputs */ }
       // Prefer the most specific semantic label; only fall back to visible
       // text, and never let a giant text blob become the "name".
       const ariaLabel = (await h.getAttribute("aria-label")) || "";
@@ -104,9 +172,9 @@ export async function browserSnapshot(): Promise<{ ok: boolean; url?: string; in
       if (!name) {
         const txt = (await h.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
         // Skip elements whose only signal is long body copy (not a control).
-        if (txt.length > 0 && txt.length <= 40 && (role === "button" || role === "link" || role === "image")) {
+        if (txt.length > 0 && txt.length <= 40 && (role === "button" || role === "link" || role === "image" || role === "option")) {
           name = txt;
-        } else if (editable) {
+        } else if (editable || isCombobox) {
           name = `${role}`;
         } else {
           continue; // noisy non-interactive element; exclude from snapshot
@@ -123,12 +191,20 @@ export async function browserSnapshot(): Promise<{ ok: boolean; url?: string; in
           name = `${name} (source domain)`;
         }
       }
+      // Filter out popular-route suggestion buttons on sites like Google Flights.
+      // These are pre-filled "Find flights from X to Y" buttons that clutter the
+      // snapshot and distract the planner from the actual form fields.
+      if (role === "button" && name) {
+        if (/^Find flights from/i.test(name)) continue;
+        if (/^Flights from/i.test(name)) continue;
+      }
       const inputType = editable ? (await h.getAttribute("type")) || "text" : undefined;
       let description: string;
-      if (editable) description = `text field${inputType && inputType !== "text" ? ` (${inputType})` : ""}`;
+      if (isCombobox) description = `combobox (click to open, then type)`;
+      else if (role === "option") description = `suggestion (click to select)`;
+      else if (editable) description = `text field${inputType && inputType !== "text" ? ` (${inputType})` : ""}`;
       else if (role === "button") description = `button`;
       else if (role === "link") description = `link`;
-      else if (role === "combobox") description = `dropdown`;
       else description = role;
       pairs.push({
         handle: h,
@@ -152,9 +228,13 @@ export async function browserSnapshot(): Promise<{ ok: boolean; url?: string; in
     lastElements = pairs.map((p) => p.handle);
     const interactive: SnapshotElement[] = [];
     elementCounter = 0;
-    for (const p of pairs) {
+    // Cap at 25 elements to keep the planner focused — the sorted order puts
+    // editable fields and comboboxes first, so the most important targets are
+    // always within this window.
+    const cap = Math.min(pairs.length, 25);
+    for (let i = 0; i < cap; i++) {
       const ref = `[${++elementCounter}]`;
-      interactive.push({ ...p.el, index: elementCounter, ref });
+      interactive.push({ ...pairs[i].el, index: elementCounter, ref });
     }
     return { ok: true, url: page.url(), interactive_elements: interactive };
   } catch (e: any) {
@@ -177,7 +257,7 @@ export async function browserClick(ref: string): Promise<{ ok: boolean; error?: 
     const msg = (e?.message ?? String(e)) as string;
     // If the element detached because the click navigated the page, the
     // action succeeded — the page simply moved out from under the handle.
-    if (/not attached|detached|navigated|navigation/i.test(msg)) {
+    if (/not attached|detached|navigated|navigation|Target page|has been closed/i.test(msg)) {
       await page!.waitForLoadState("domcontentloaded").catch(() => {});
       return { ok: true, error: "navigation" };
     }
@@ -204,10 +284,32 @@ export async function browserType(ref: string, text: string): Promise<{ ok: bool
   const target = lastElements[idx - 1];
   if (!target) return { ok: false, error: `no element at ${ref}` };
   try {
-    await target.fill(text, { timeout: 10000 });
+    const tag = await target.evaluate((el) => el.tagName).catch(() => "");
+    if (tag === "INPUT" || tag === "TEXTAREA") {
+      // Native input — use fill() which is fast and reliable, then dispatch
+      // an input event so dynamic widgets (React, etc.) pick up the change.
+      await target.fill(text, { timeout: 5000 });
+      await target.dispatchEvent("input").catch(() => {});
+    } else {
+      // Non-native element (combobox wrapper, contenteditable, etc.) — use
+      // keyboard simulation which triggers all the proper events.
+      await target.click({ timeout: 5000, noWaitAfter: true });
+      await page!.waitForLoadState("domcontentloaded").catch(() => {});
+      await page!.keyboard.press("Meta+A").catch(() => page!.keyboard.press("Control+A"));
+      await page!.keyboard.press("Backspace");
+      await page!.keyboard.type(text, { delay: 30 });
+    }
+    // Brief pause so dynamic dropdowns have time to render.
+    await page!.waitForTimeout(600).catch(() => {});
     return { ok: true };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? String(e) };
+    const msg = (e?.message ?? String(e)) as string;
+    // If the element/page navigated or was closed during the click, treat as success.
+    if (/not attached|detached|navigated|navigation|Target page|has been closed/i.test(msg)) {
+      await page!.waitForLoadState("domcontentloaded").catch(() => {});
+      return { ok: true, error: "navigation" };
+    }
+    return { ok: false, error: msg };
   }
 }
 
@@ -218,6 +320,30 @@ export async function browserScroll(direction: "up" | "down" = "down"): Promise<
     return { ok: true };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? String(e) };
+  }
+}
+
+/**
+ * Select a dropdown option using keyboard navigation (ArrowDown + Enter).
+ * This avoids clicking option elements which can trigger page navigation
+ * that crashes the browser (e.g. Google Flights SPA).
+ */
+export async function browserKeyboardSelect(): Promise<{ ok: boolean; error?: string }> {
+  if (!page) return { ok: false, error: "browser not started" };
+  try {
+    await page.keyboard.press("ArrowDown");
+    await page.waitForTimeout(300).catch(() => {});
+    await page.keyboard.press("Enter");
+    await page.waitForLoadState("domcontentloaded").catch(() => {});
+    await page.waitForTimeout(500).catch(() => {});
+    return { ok: true };
+  } catch (e: any) {
+    const msg = (e?.message ?? String(e)) as string;
+    if (/not attached|detached|navigated|navigation|Target page|has been closed/i.test(msg)) {
+      await page!.waitForLoadState("domcontentloaded").catch(() => {});
+      return { ok: true, error: "navigation" };
+    }
+    return { ok: false, error: msg };
   }
 }
 
@@ -273,20 +399,28 @@ export async function browserDismissOverlay(): Promise<{ ok: boolean; dismissed:
     // Backdrops often have no close button — remove the intercepting overlay
     // element directly so it stops blocking pointer events. This runs in the
     // browser context; cast to any to avoid pulling DOM types into the build.
+    // IMPORTANT: Do NOT remove dialogs that contain form inputs (comboboxes,
+    // text fields) — those are part of the UI flow (e.g. Google Flights origin
+    // picker), not popups to dismiss.
     const removed = await page.evaluate((): boolean => {
       const doc = (globalThis as any).document;
       if (!doc) return false;
-      const els = Array.from(
+      const candidates = Array.from(
         doc.querySelectorAll(
           '[data-testid*="backdrop"], [class*="backdrop"], [data-bui-trap-root], [aria-modal="true"]',
         ),
       ).filter((el: any) => {
         const s = (globalThis as any).getComputedStyle(el);
         const r = el.getBoundingClientRect();
-        return (r.width > 0 && r.height > 0 && s.pointerEvents !== "none" && Number(s.zIndex) > 0) || s.position === "fixed";
+        const isVisible = r.width > 0 && r.height > 0 && s.pointerEvents !== "none" && (Number(s.zIndex) > 0 || s.position === "fixed");
+        if (!isVisible) return false;
+        // Skip dialogs that contain input fields or comboboxes — they're
+        // interactive UI, not overlays to dismiss.
+        if (el.querySelector && el.querySelector('input, textarea, [role="combobox"]')) return false;
+        return true;
       });
-      els.forEach((el: any) => el.remove());
-      return els.length > 0;
+      candidates.forEach((el: any) => el.remove());
+      return candidates.length > 0;
     }).catch(() => false);
     if (removed) return { ok: true, dismissed: true };
     // Fall back to Escape; if a dialog was open this closes it.

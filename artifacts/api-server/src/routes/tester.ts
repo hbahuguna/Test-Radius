@@ -4,7 +4,7 @@ import { agenticRunsTable, userApiKeysTable, usersTable, creditLedgerTable } fro
 import { eq, desc } from "drizzle-orm";
 import { requireSignedUp } from "../middlewares/auth";
 import { getOrCreateUser, deductCredit } from "../lib/auth";
-import { proxyAgenticStream, stopAgentRun, getAgentScreenshot } from "../lib/sdet-agent";
+import { proxyAgenticStream, stopAgentRun, getAgentScreenshot, streamChatResponse } from "../lib/sdet-agent";
 import { decryptKey } from "../lib/crypto";
 import { logger } from "../lib/logger";
 
@@ -18,7 +18,7 @@ router.use(requireSignedUp);
  */
 router.post("/run", async (req: Request, res: Response) => {
   const authUser = req.user!;
-  const { url, goal, assertions, headless = true, max_turns = 30, model } = req.body ?? {};
+  const { url, goal, assertions, headless = true, max_turns = 30, model, mode = "reactive" } = req.body ?? {};
 
   if (!url || !goal) {
     res.status(400).json({ error: "invalid_request", message: "url and goal are required" });
@@ -76,6 +76,7 @@ router.post("/run", async (req: Request, res: Response) => {
     assertions: assertions ?? [],
     headless,
     max_turns,
+    mode,
   };
   if (byokKey && byokHeader) {
     agentBody[`${byokHeader}_api_key`] = byokKey;
@@ -89,8 +90,9 @@ router.post("/run", async (req: Request, res: Response) => {
   try {
     const summary = await proxyAgenticStream(agentBody as never, res);
 
-    const { success: finalSuccess, error: finalError, assertions: finalAssertions } = summary;
+    const { success: finalSuccess, error: finalError } = summary;
     const finalCode = summary.generatedCode;
+    const finalAssertionResults = summary.assertionResults;
 
     // Refund the credit when the run failed purely because of an invalid BYOK
     // (bring-your-own-key) provider key — the user shouldn't pay for a config
@@ -123,7 +125,8 @@ router.post("/run", async (req: Request, res: Response) => {
       .set({
         status: "completed",
         success: finalSuccess,
-        assertionResults: finalAssertions as never,
+        error: finalError,
+        assertionResults: finalAssertionResults as never,
         completedAt: new Date(),
       })
       .where(eq(agenticRunsTable.id, run.id));
@@ -131,9 +134,10 @@ router.post("/run", async (req: Request, res: Response) => {
     res.end();
   } catch (err) {
     logger.error({ err, runId: run.id }, "Agentic run failed");
+    const errMsg = err instanceof Error ? err.message : String(err);
     await db
       .update(agenticRunsTable)
-      .set({ status: "failed", completedAt: new Date() })
+      .set({ status: "failed", error: errMsg, completedAt: new Date() })
       .where(eq(agenticRunsTable.id, run.id));
     if (!res.headersSent) {
       res.status(502).json({ error: "agent_error", message: "Failed to run agent" });
@@ -440,6 +444,53 @@ router.post("/jira", async (req: Request, res: Response) => {
   } catch (err) {
     logger.error({ err, issueKey }, "Jira import failed");
     res.status(502).json({ error: "jira_error", message: "Failed to fetch Jira ticket" });
+  }
+});
+
+/**
+ * POST /api/tester/chat
+ * Inline chat with the agent after a run. Streams tokens as NDJSON.
+ */
+router.post("/chat", async (req: Request, res: Response) => {
+  const authUser = req.user!;
+  const { message, context, model, model_provider, url } = req.body ?? {};
+
+  if (!message || !context) {
+    res.status(400).json({ error: "invalid_request", message: "message and context are required" });
+    return;
+  }
+
+  const user = (await getOrCreateUser(authUser))!;
+  const provider = (model_provider as string) || user.modelProvider || "opencode";
+
+  // Resolve BYOK key
+  const keyRow = await db
+    .select()
+    .from(userApiKeysTable)
+    .where(eq(userApiKeysTable.userId, user.id))
+    .limit(10);
+  const match = keyRow.find((k) => k.provider === provider);
+
+  const byok: Record<string, string> = {};
+  if (match) {
+    const decrypted = decryptKey(JSON.parse(match.encryptedKey));
+    byok[provider] = decrypted;
+  }
+
+  res.setHeader("Content-Type", "application/x-ndjson");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  try {
+    for await (const token of streamChatResponse(message, context, byok, model ?? null, url ?? null)) {
+      res.write(JSON.stringify({ event: "token", text: token }) + "\n");
+    }
+    res.write(JSON.stringify({ event: "done" }) + "\n");
+    res.end();
+  } catch (err: any) {
+    logger.error({ err }, "Chat failed");
+    res.write(JSON.stringify({ event: "error", message: err?.message || "Chat failed" }) + "\n");
+    res.end();
   }
 });
 

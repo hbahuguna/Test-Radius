@@ -15,6 +15,7 @@ export interface RunRequest {
   assertions?: Assertion[];
   headless?: boolean;
   max_turns?: number;
+  mode?: "reactive" | "planned";
   model_provider?: string;
   model?: string;
 }
@@ -25,6 +26,7 @@ export interface RunHistoryItem {
   goal: string;
   status: string;
   success: boolean | null;
+  error: string | null;
   creditsUsed: number;
   modelUsed: string;
   createdAt: string;
@@ -311,4 +313,80 @@ export async function saveJiraConnection(conn: JiraConnection): Promise<UserApiK
 // authenticated. Mirrors the getter wired into the API client in auth.tsx.
 async function getAuthToken(): Promise<string | null> {
   return getSessionToken();
+}
+
+// --- Inline chat ---
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ChatRequest {
+  message: string;
+  context: string;
+  url?: string;
+  model_provider?: string;
+  model?: string;
+}
+
+/**
+ * Stream a chat response from the agent, given the run context.
+ */
+export async function streamChat(
+  request: ChatRequest,
+  handlers: {
+    onToken: (token: string) => void;
+    signal?: AbortSignal;
+  },
+): Promise<void> {
+  const token = await getAuthToken();
+  const response = await fetch("/api/tester/chat", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(request),
+    signal: handlers.signal,
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    const e: any = new Error(err.message || `Chat failed (${response.status})`);
+    e.code = err.error || null;
+    throw e;
+  }
+
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line) continue;
+      try {
+        const evt = JSON.parse(line);
+        if (evt.event === "token" && typeof evt.text === "string") {
+          handlers.onToken(evt.text);
+        }
+      } catch {
+        // ignore malformed lines
+      }
+    }
+  }
+  if (buffer.trim()) {
+    try {
+      const evt = JSON.parse(buffer.trim());
+      if (evt.event === "token" && typeof evt.text === "string") {
+        handlers.onToken(evt.text);
+      }
+    } catch {}
+  }
 }

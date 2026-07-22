@@ -58,3 +58,5 @@ export function stopRun(): void {
 export { clearStop };
 export * from "./executor.js";
 export * from "./reasoning/byokClient.js";
+export { buildByokFactory } from "./reasoning/llmFactory.js";
+export { chatAgentTurn, type ChatContext } from "./chatAgent.js";

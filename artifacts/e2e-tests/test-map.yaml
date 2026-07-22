@@ -1,0 +1,195 @@
+version: 1
+mappings:
+  tests/careers.spec.ts:
+    symbols:
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/lib/utils.ts::cn
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/TestRadiusLogo.tsx::TestRadiusLogo
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Header.tsx::Header
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Footer.tsx::Footer
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::EarlyAccessForm
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::handleSubmit
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Layout.tsx::Layout
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::YoutubeEmbed
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::BlogPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::loadPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Careers.tsx::Careers
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Careers.tsx::handleSubmit
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/ui/badge.tsx::Badge
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/DocsTOC.tsx::DocsTOC
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/App.tsx::App
+  tests/blog.spec.ts:
+    symbols:
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/lib/utils.ts::cn
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/TestRadiusLogo.tsx::TestRadiusLogo
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Header.tsx::Header
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Footer.tsx::Footer
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::EarlyAccessForm
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::handleSubmit
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Layout.tsx::Layout
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogIndex.tsx::BlogIndex
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogIndex.tsx::loadPosts
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::YoutubeEmbed
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::BlogPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::loadPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/ui/badge.tsx::Badge
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/DocsTOC.tsx::DocsTOC
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/App.tsx::App
+  tests/early-access-form.spec.ts:
+    symbols:
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/lib/utils.ts::cn
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/LatestArticlesSection.tsx::LatestArticlesSection
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/LatestArticlesSection.tsx::loadLatestPosts
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/TestRadiusLogo.tsx::TestRadiusLogo
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Header.tsx::Header
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Footer.tsx::Footer
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::EarlyAccessForm
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::handleSubmit
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Layout.tsx::Layout
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Home.tsx::Home
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Home.tsx::scrollToForm
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::YoutubeEmbed
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::BlogPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::loadPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/ui/badge.tsx::Badge
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/DocsTOC.tsx::DocsTOC
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/App.tsx::App
+  tests/home.spec.ts:
+    symbols:
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/lib/utils.ts::cn
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/LatestArticlesSection.tsx::LatestArticlesSection
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/LatestArticlesSection.tsx::loadLatestPosts
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/TestRadiusLogo.tsx::TestRadiusLogo
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Header.tsx::Header
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Footer.tsx::Footer
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::EarlyAccessForm
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::handleSubmit
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Layout.tsx::Layout
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Home.tsx::Home
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Home.tsx::scrollToForm
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogIndex.tsx::BlogIndex
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogIndex.tsx::loadPosts
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::YoutubeEmbed
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::BlogPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::loadPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/ui/badge.tsx::Badge
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/DocsTOC.tsx::DocsTOC
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/App.tsx::App
+  tests/navigation.spec.ts:
+    symbols:
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/lib/utils.ts::cn
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/LatestArticlesSection.tsx::LatestArticlesSection
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/LatestArticlesSection.tsx::loadLatestPosts
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/TestRadiusLogo.tsx::TestRadiusLogo
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Header.tsx::Header
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Footer.tsx::Footer
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::EarlyAccessForm
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::handleSubmit
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Layout.tsx::Layout
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Home.tsx::Home
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Home.tsx::scrollToForm
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogIndex.tsx::BlogIndex
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogIndex.tsx::loadPosts
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::YoutubeEmbed
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::BlogPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::loadPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Careers.tsx::Careers
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Careers.tsx::handleSubmit
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/ui/badge.tsx::Badge
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/DocsTOC.tsx::DocsTOC
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/App.tsx::App
+  tests/not-found.spec.ts:
+    symbols:
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::YoutubeEmbed
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::BlogPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::loadPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/ui/badge.tsx::Badge
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/DocsTOC.tsx::DocsTOC
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/App.tsx::App
+  tests/pricing-calculator-positive.spec.ts:
+    symbols:
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/lib/utils.ts::cn
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/TestRadiusLogo.tsx::TestRadiusLogo
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Header.tsx::Header
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Footer.tsx::Footer
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::EarlyAccessForm
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::handleSubmit
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Layout.tsx::Layout
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::YoutubeEmbed
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::BlogPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::loadPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/ui/badge.tsx::Badge
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::getEffectiveMonthly
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::getBestTierName
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::Pricing
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::handleCta
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::formatPrice
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::formatPeriod
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/DocsTOC.tsx::DocsTOC
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/App.tsx::App
+  tests/pricing-data-display.spec.ts:
+    symbols:
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/lib/utils.ts::cn
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/TestRadiusLogo.tsx::TestRadiusLogo
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Header.tsx::Header
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Footer.tsx::Footer
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::EarlyAccessForm
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::handleSubmit
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Layout.tsx::Layout
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::YoutubeEmbed
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::BlogPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::loadPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/ui/badge.tsx::Badge
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::getEffectiveMonthly
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::getBestTierName
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::Pricing
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::handleCta
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::formatPrice
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::formatPeriod
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/DocsTOC.tsx::DocsTOC
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/App.tsx::App
+  tests/pricing-early-access-flow.spec.ts:
+    symbols:
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/lib/utils.ts::cn
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/TestRadiusLogo.tsx::TestRadiusLogo
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Header.tsx::Header
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Footer.tsx::Footer
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::EarlyAccessForm
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::handleSubmit
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Layout.tsx::Layout
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::YoutubeEmbed
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::BlogPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::loadPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/ui/badge.tsx::Badge
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::getEffectiveMonthly
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::getBestTierName
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::Pricing
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::handleCta
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::formatPrice
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::formatPeriod
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/DocsTOC.tsx::DocsTOC
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/App.tsx::App
+  tests/pricing.spec.ts:
+    symbols:
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/lib/utils.ts::cn
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/LatestArticlesSection.tsx::LatestArticlesSection
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/LatestArticlesSection.tsx::loadLatestPosts
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/TestRadiusLogo.tsx::TestRadiusLogo
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Header.tsx::Header
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Footer.tsx::Footer
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::EarlyAccessForm
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/EarlyAccessForm.tsx::handleSubmit
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/Layout.tsx::Layout
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Home.tsx::Home
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Home.tsx::scrollToForm
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::YoutubeEmbed
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::BlogPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/BlogPost.tsx::loadPost
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/ui/badge.tsx::Badge
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::getEffectiveMonthly
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::getBestTierName
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::Pricing
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::handleCta
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::formatPrice
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/pages/Pricing.tsx::formatPeriod
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/components/DocsTOC.tsx::DocsTOC
+    - /Users/skaparwan/github/chatgpt/testradius-landing/Test-Radius/artifacts/testradius/src/App.tsx::App

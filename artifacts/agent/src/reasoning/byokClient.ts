@@ -17,12 +17,16 @@ const PROVIDER_ENDPOINTS: Record<string, string> = {
   openai: "https://api.openai.com/v1",
   anthropic: "https://api.anthropic.com/v1",
   google: "https://generativelanguage.googleapis.com/v1beta/openai",
+  openrouter: "https://openrouter.ai/api/v1",
+  poolside: "https://inference.poolside.ai/v1",
 };
 
 const PROVIDER_DEFAULT_MODEL: Record<string, string> = {
   openai: "gpt-4o-mini",
   anthropic: "claude-3-5-sonnet-latest",
   google: "gemini-2.5-flash",
+  openrouter: "poolside/laguna-xs-2.1",
+  poolside: "poolside/laguna-xs-2.1",
 };
 
 export interface StreamCallbacks {
@@ -145,10 +149,24 @@ export class ByokClient {
           } catch {
             continue;
           }
-          const delta = obj?.choices?.[0]?.delta?.content;
+          const delta = obj?.choices?.[0]?.delta;
+          let content: string | undefined;
           if (delta) {
-            cb.onDelta("content", delta);
-            full.push(delta);
+            // Capture reasoning content (reasoning models like Poolside)
+            const reasoning = delta.reasoning_content;
+            if (reasoning) {
+              cb.onDelta("reasoning", reasoning);
+            }
+            // Try to find content in common locations for LLM deltas
+            content = delta.content || delta.text;
+            if (!content && Array.isArray(delta.parts)) {
+              content = delta.parts.map((p: any) => p.text).join("");
+            }
+          }
+
+          if (content) {
+            cb.onDelta("content", content);
+            full.push(content);
           }
         }
       }

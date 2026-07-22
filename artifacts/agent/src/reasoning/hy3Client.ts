@@ -4,8 +4,11 @@
  */
 
 import { ByokError, ByokAuthError, type StreamCallbacks } from "./byokClient.js";
+import { appendFileSync, mkdirSync } from "fs";
+import { join } from "path";
 
 const ZEN_DEFAULT_BASE_URL = "https://opencode.ai/zen/v1";
+const POOLSIDE_BASE_URL = "https://api.poolside.ai/v1";
 
 export class Hy3Client {
   readonly model: string;
@@ -13,9 +16,15 @@ export class Hy3Client {
   private readonly apiKey?: string;
 
   constructor(apiKey?: string, apiUrl?: string, model = "hy3-free") {
-    this.baseUrl = (apiUrl || process.env.OPENCODE_ZEN_BASE_URL || ZEN_DEFAULT_BASE_URL).replace(/\/$/, "");
-    this.model = process.env.OPENCODE_MODEL || model;
-    this.apiKey = apiKey || process.env.OPENCODE_API_KEY || process.env.OPENCODE_ZEN_API_KEY;
+    // If poolside key is provided, use Poolside endpoint
+    if (apiKey?.startsWith("sky_") || (!apiKey && process.env.POOLSIDE_API_KEY?.startsWith("sky_"))) {
+      this.baseUrl = (apiUrl || process.env.POOLSIDE_ZEN_BASE_URL || POOLSIDE_BASE_URL).replace(/\/$/, "");
+      this.model = "poolside/laguna-xs-2.1";
+    } else {
+      this.baseUrl = (apiUrl || process.env.OPENCODE_ZEN_BASE_URL || ZEN_DEFAULT_BASE_URL).replace(/\/$/, "");
+      this.model = process.env.OPENCODE_MODEL || model;
+    }
+    this.apiKey = apiKey || process.env.POOLSIDE_API_KEY || process.env.OPENCODE_API_KEY || process.env.OPENCODE_ZEN_API_KEY;
   }
 
   private headers(): Record<string, string> {
@@ -66,6 +75,7 @@ export class Hy3Client {
       cb.onDelta("reasoning", "[Hy3 error: OPENCODE_API_KEY is not set.]");
       throw new ByokError("OPENCODE_API_KEY (or OPENCODE_ZEN_API_KEY) is not set.");
     }
+    try { const d = join(process.cwd(), "logs"); try { mkdirSync(d, { recursive: true }); } catch {} appendFileSync(join(d, "llm-debug.log"), `[${new Date().toISOString()}] Hy3.streamInfer key=${this.apiKey!.slice(0,8)}... model=${this.model} prompt_len=${prompt.length}\n`); } catch {}
     const messages = [{ role: "user", content: prompt }] as any[];
     if (system) messages.unshift({ role: "system", content: system });
     const payload = {
@@ -96,6 +106,8 @@ export class Hy3Client {
     const decoder = new TextDecoder();
     const full: string[] = [];
     let buffer = "";
+    let chunkCount = 0;
+    const rawChunks: string[] = [];
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -108,12 +120,14 @@ export class Hy3Client {
           if (!line.startsWith("data:")) continue;
           const chunk = line.slice(5).trim();
           if (!chunk || chunk === "[DONE]") continue;
+          if (rawChunks.length < 5) rawChunks.push(chunk.slice(0, 300));
           let obj: any;
           try {
             obj = JSON.parse(chunk);
           } catch {
             continue;
           }
+          chunkCount++;
           const delta = obj?.choices?.[0]?.delta ?? {};
           if (delta.reasoning) {
             cb.onDelta("reasoning", delta.reasoning);
@@ -130,7 +144,14 @@ export class Hy3Client {
       cb.onDelta("reasoning", `[Hy3 error: request to OpenCode Zen failed: ${e?.message ?? e}]`);
       throw new ByokError(`request to OpenCode Zen failed: ${e?.message ?? e}`);
     }
-    return full.join("");
+    const result = full.join("");
+    const d = join(process.cwd(), "logs");
+    try { mkdirSync(d, { recursive: true }); } catch {}
+    appendFileSync(join(d, "llm-debug.log"),
+      `[${new Date().toISOString()}] chunks=${chunkCount} result_len=${result.length} tail=${result.slice(-300)}\n` +
+      rawChunks.map((c, i) => `  chunk[${i}]: ${c}\n`).join("")
+    );
+    return result;
   }
 
   health(): boolean {

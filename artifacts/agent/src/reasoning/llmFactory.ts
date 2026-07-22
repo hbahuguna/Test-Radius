@@ -8,6 +8,8 @@
 
 import { ByokClient, ByokAuthError, ByokError, type StreamCallbacks } from "./byokClient.js";
 import { Hy3Client } from "./hy3Client.js";
+import { appendFileSync, mkdirSync } from "fs";
+import { join } from "path";
 
 export interface LlmClient {
   provider?: string;
@@ -35,10 +37,19 @@ export interface LlmClientConfig {
 export class LLMFactory {
   clients: LlmClientConfig[] = [];
 
-  constructor(configs: LlmClientConfig[]) {
+   constructor(configs: LlmClientConfig[]) {
     for (const c of configs) {
-      if (c.client.health && c.client.health()) {
-        this.clients.push(c);
+      // Debug why client health check might fail
+      if (c.client.health) {
+        const isHealthy = c.client.health();
+        console.warn(`[llm_factory] Client ${c.name} health check: ${isHealthy}`);
+        if (isHealthy) {
+          this.clients.push(c);
+        } else {
+          console.warn(`[llm_factory] Client ${c.name} is unhealthy and will not be used.`);
+        }
+      } else {
+        console.warn(`[llm_factory] Client ${c.name} has no health check and will be skipped.`);
       }
     }
     if (this.clients.length === 0) {
@@ -54,6 +65,7 @@ export class LLMFactory {
     temperature = 0,
     system?: string,
   ): Promise<[string | null, string]> {
+    try { const d = join(process.cwd(), "logs"); try { mkdirSync(d, { recursive: true }); } catch {} appendFileSync(join(d, "llm-debug.log"), `[${new Date().toISOString()}] LLMFactory.streamInfer clients=${this.clients.length} names=${this.clients.map(c => c.name).join(",")}\n`); } catch {}
     for (const { name, client } of this.clients) {
       if (client.health && !client.health()) continue;
       try {
@@ -77,7 +89,7 @@ export class LLMFactory {
  */
 export function buildByokFactory(byok: Record<string, string>, model?: string | null): LLMFactory {
   const configs: LlmClientConfig[] = [];
-  for (const provider of ["openai", "anthropic", "google", "opencode"]) {
+  for (const provider of ["openai", "anthropic", "google", "opencode", "openrouter", "poolside"]) {
     const key = byok[provider];
     if (!key) continue;
     if (provider === "opencode") {

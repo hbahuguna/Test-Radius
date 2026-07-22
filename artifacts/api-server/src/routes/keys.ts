@@ -17,7 +17,7 @@ router.post("/", async (req: Request, res: Response) => {
   const authUser = req.user!;
   const { provider, key } = req.body ?? {};
 
-  if (!["opencode", "openai", "anthropic", "google", "jira"].includes(provider)) {
+  if (!["opencode", "openai", "anthropic", "google", "openrouter", "poolside", "jira"].includes(provider)) {
     res.status(400).json({ error: "invalid_provider" });
     return;
   }

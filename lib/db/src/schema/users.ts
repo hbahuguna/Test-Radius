@@ -28,6 +28,7 @@ export const agenticRunsTable = pgTable("agentic_runs", {
   goal: text("goal").notNull(),
   status: text("status").notNull().default("queued"),  // queued | running | completed | failed | stopped
   success: boolean("success"),
+  error: text("error"),
   creditsUsed: integer("credits_used").notNull().default(0),
   modelUsed: text("model_used").notNull().default("built-in"),
   assertionResults: jsonb("assertion_results"),
