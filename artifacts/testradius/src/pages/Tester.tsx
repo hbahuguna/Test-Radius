@@ -51,7 +51,6 @@ export function Tester() {
   const [status, setStatus] = useState<RunStatus>("idle");
   const [success, setSuccess] = useState<boolean | null>(null);
   const [steps, setSteps] = useState<StepEvent[]>([]);
-  const [thoughts, setThoughts] = useState<string[]>([]);
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -79,6 +78,19 @@ export function Tester() {
 
   useEffect(() => {
     loadMeta();
+
+    // Start screenshot polling immediately and keep it running
+    const pollScreenshot = async () => {
+      const shot = await getScreenshot();
+      if (shot?.screenshot) setScreenshot(shot.screenshot);
+    };
+    screenshotTimer.current = setInterval(pollScreenshot, 1500);
+    pollScreenshot();
+
+    return () => {
+      // Cleanup: stop screenshot polling when component unmounts
+      if (screenshotTimer.current) clearInterval(screenshotTimer.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -118,14 +130,6 @@ export function Tester() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    // Poll the live screenshot while the run is active.
-    const pollScreenshot = async () => {
-      const shot = await getScreenshot();
-      if (shot?.screenshot) setScreenshot(shot.screenshot);
-    };
-    screenshotTimer.current = setInterval(pollScreenshot, 1500);
-    pollScreenshot();
-
     const cleanedAssertions = assertions
       .filter((a) => (a.target || a.expected || a.pattern))
       .map((a) => ({
@@ -145,15 +149,13 @@ export function Tester() {
           mode,
           model_provider: model,
           model: modelId,
+          use_browser_use: true,
         },
         {
           signal: controller.signal,
           onEvent: (evt) => {
             const e = evt as Record<string, any>;
-            if (e.event === "thinking_delta" || e.event === "content_delta") {
-              const text = (e.text as string) ?? "";
-              if (text) setThoughts((prev) => [...prev, text]);
-            } else if (e.event === "tool_call") {
+            if (e.event === "tool_call") {
               setSteps((prev) => [
                 ...prev,
                 {
@@ -217,10 +219,10 @@ export function Tester() {
         }
       }
     } finally {
-      if (screenshotTimer.current) clearInterval(screenshotTimer.current);
       setRunning(false);
       abortRef.current = null;
       loadMeta();
+      // Don't stop screenshot polling - keep it running for chat
     }
   };
 
@@ -308,27 +310,6 @@ export function Tester() {
                 )}
               </CardContent>
             </Card>
-
-            <Card className="rounded-xl border-border shadow-lg">
-              <CardHeader>
-                <CardTitle>Model Reasoning</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <LiveProgress
-                  steps={[]}
-                  thoughts={thoughts}
-                  screenshot={null}
-                  status={status}
-                  success={success}
-                />
-                {runError && status === "failed" && (
-                  <div className="mt-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
-                    <p className="text-sm font-medium text-destructive mb-1">Error</p>
-                    <p className="text-sm text-destructive/80 font-mono whitespace-pre-wrap">{runError}</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
           </div>
 
           {/* Right column: big browser view + steps */}
@@ -367,7 +348,6 @@ export function Tester() {
               <CardContent>
                 <LiveProgress
                   steps={steps}
-                  thoughts={[]}
                   screenshot={null}
                   status={status}
                   success={success}
@@ -387,7 +367,6 @@ export function Tester() {
                 goal={goal}
                 url={url}
                 steps={steps.map((s) => ({ name: s.action || "unknown", args: { target: s.target }, result: s.detail }))}
-                thoughts={thoughts}
                 runError={runError}
                 modelProvider={model}
                 modelId={modelId}

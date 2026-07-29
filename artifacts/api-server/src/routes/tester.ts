@@ -4,7 +4,7 @@ import { agenticRunsTable, userApiKeysTable, usersTable, creditLedgerTable } fro
 import { eq, desc } from "drizzle-orm";
 import { requireSignedUp } from "../middlewares/auth";
 import { getOrCreateUser, deductCredit } from "../lib/auth";
-import { proxyAgenticStream, stopAgentRun, getAgentScreenshot, streamChatResponse } from "../lib/sdet-agent";
+import { proxyBrowserAutoStream, stopBrowserAutoRun, getBrowserAutoScreenshot, streamChatResponse } from "../lib/browser-use-client";
 import { decryptKey } from "../lib/crypto";
 import { logger } from "../lib/logger";
 
@@ -88,7 +88,7 @@ router.post("/run", async (req: Request, res: Response) => {
 
   // Stream the agent response back to the client (runs in-process)
   try {
-    const summary = await proxyAgenticStream(agentBody as never, res);
+    const summary = await proxyBrowserAutoStream(agentBody as never, res);
 
     const { success: finalSuccess, error: finalError } = summary;
     const finalCode = summary.generatedCode;
@@ -182,6 +182,31 @@ router.get("/run/:id", async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/tester/run/last/stop
+ * Convenience alias used by the frontend's Stop button (no run id needed).
+ * MUST be defined before /run/:id/stop to avoid Express matching "last" as :id.
+ */
+router.post("/run/last/stop", async (req: Request, res: Response) => {
+  const authUser = req.user!;
+  const [run] = await db
+    .select()
+    .from(agenticRunsTable)
+    .where(eq(agenticRunsTable.userId, authUser.id))
+    .orderBy(desc(agenticRunsTable.createdAt))
+    .limit(1);
+  if (!run) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  await stopBrowserAutoRun();
+  await db
+    .update(agenticRunsTable)
+    .set({ status: "stopped", completedAt: new Date() })
+    .where(eq(agenticRunsTable.id, run.id));
+  res.json({ stopped: true });
+});
+
+/**
  * POST /api/tester/run/:id/stop
  * Stop a running agentic run.
  */
@@ -196,35 +221,11 @@ router.post("/run/:id/stop", async (req: Request, res: Response) => {
     res.status(404).json({ error: "not_found" });
     return;
   }
-  await stopAgentRun();
+  await stopBrowserAutoRun();
   await db
     .update(agenticRunsTable)
     .set({ status: "stopped", completedAt: new Date() })
     .where(eq(agenticRunsTable.id, String(req.params.id)));
-  res.json({ stopped: true });
-});
-
-/**
- * POST /api/tester/run/last/stop
- * Convenience alias used by the frontend's Stop button (no run id needed).
- */
-router.post("/run/last/stop", async (req: Request, res: Response) => {
-  const authUser = req.user!;
-  const [run] = await db
-    .select()
-    .from(agenticRunsTable)
-    .where(eq(agenticRunsTable.userId, authUser.id))
-    .orderBy(desc(agenticRunsTable.createdAt))
-    .limit(1);
-  if (!run) {
-    res.status(404).json({ error: "not_found" });
-    return;
-  }
-  await stopAgentRun();
-  await db
-    .update(agenticRunsTable)
-    .set({ status: "stopped", completedAt: new Date() })
-    .where(eq(agenticRunsTable.id, run.id));
   res.json({ stopped: true });
 });
 
@@ -234,13 +235,20 @@ router.post("/run/last/stop", async (req: Request, res: Response) => {
  */
 router.get("/screenshot", async (_req: Request, res: Response) => {
   try {
-    const buf = await getAgentScreenshot();
+    const buf = await getBrowserAutoScreenshot();
     if (!buf) {
+      logger.debug("Screenshot: no screenshot available");
       res.status(404).json({ error: "no_screenshot" });
       return;
     }
+    // Add no-cache headers to prevent browser caching
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    logger.debug(`Screenshot: returning ${buf.length} bytes`);
     res.json({ screenshot: buf.toString("base64") });
-  } catch {
+  } catch (err) {
+    logger.error({ err }, "Screenshot failed");
     res.status(500).json({ error: "screenshot_failed" });
   }
 });

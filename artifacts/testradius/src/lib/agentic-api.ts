@@ -7,6 +7,7 @@ export interface Assertion {
   expected?: string;
   pattern?: string;
   description?: string;
+  selector?: string;
 }
 
 export interface RunRequest {
@@ -18,6 +19,7 @@ export interface RunRequest {
   mode?: "reactive" | "planned";
   model_provider?: string;
   model?: string;
+  use_browser_use?: boolean;
 }
 
 export interface RunHistoryItem {

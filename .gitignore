@@ -55,3 +55,20 @@ Thumbs.db
 # E2E test artifacts
 playwright-report/
 .coverage-raw/
+test-results/
+
+# Stagehand cache — commit to avoid redundant LLM calls
+# (unignored so .stagehand-cache/ is tracked)
+
+# Environment files (secrets)
+.env*
+!.env.example
+
+# Virtual environments
+.venv
+.venv/
+venv/
+
+# Build artifacts
+artifacts/api-server/logs/
+artifacts/e2e-tests/coverage/

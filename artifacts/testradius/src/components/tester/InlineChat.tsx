@@ -9,7 +9,6 @@ interface InlineChatProps {
   goal: string;
   url: string;
   steps: Array<{ name: string; args: Record<string, any>; result?: string }>;
-  thoughts: string[];
   runError: string | null;
   modelProvider: string;
   modelId: string;
@@ -19,7 +18,6 @@ export function InlineChat({
   goal,
   url,
   steps,
-  thoughts,
   runError,
   modelProvider,
   modelId,
@@ -49,7 +47,6 @@ export function InlineChat({
       `URL: ${url}`,
       runError ? `RUN FAILED: ${runError}` : "",
       `STEPS TAKEN:\n${steps.map((s, i) => `${i + 1}. ${s.name}(${JSON.stringify(s.args)})`).join("\n")}`,
-      `THOUGHTS:\n${thoughts.slice(-10).join("\n")}`,
     ]
       .filter(Boolean)
       .join("\n\n");

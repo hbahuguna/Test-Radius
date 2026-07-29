@@ -9,6 +9,8 @@ import { DocsPage } from "./pages/DocsPage";
 import { Login } from "./pages/Login";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { Tester } from "./pages/Tester";
+import { BrowserAuto } from "./pages/BrowserAuto";
+import { BrowserAgent } from "./pages/BrowserAgent";
 import { Settings } from "./pages/Settings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 
@@ -58,6 +60,16 @@ function App() {
       <Route path="/tester">
         <ProtectedRoute>
           <Tester />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/browser-auto">
+        <ProtectedRoute>
+          <BrowserAuto />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/browser-agent">
+        <ProtectedRoute>
+          <BrowserAgent />
         </ProtectedRoute>
       </Route>
       <Route path="/settings">
