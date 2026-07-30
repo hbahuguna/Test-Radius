@@ -79,6 +79,11 @@ export interface AgentLoadingEvent {
   title: string | null;
 }
 
+export interface AgentStartedEvent {
+  event: "started";
+  run_id: string;
+}
+
 export interface AgentDoneEvent {
   event: "done";
   success: boolean;
@@ -91,7 +96,7 @@ export interface AgentErrorEvent {
   message: string;
 }
 
-export type AgentEvent = AgentStepEvent | AgentLoadingEvent | AgentDoneEvent | AgentErrorEvent;
+export type AgentEvent = AgentStartedEvent | AgentStepEvent | AgentLoadingEvent | AgentDoneEvent | AgentErrorEvent;
 
 export interface AgentRunStatus {
   status: "idle" | "running" | "completed" | "failed" | "stopped";
@@ -200,13 +205,15 @@ export async function sendBrowserAgentChat(
 /**
  * Stop the current browser-agent run.
  */
-export async function stopBrowserAgentRun(): Promise<void> {
+export async function stopBrowserAgentRun(runId?: string): Promise<void> {
   try {
     await fetch(`${API_BASE}/stop`, {
       method: "POST",
       headers: {
+        "Content-Type": "application/json",
         Authorization: `Bearer ${getAuthToken()}`,
       },
+      body: JSON.stringify({ run_id: runId }),
     });
   } catch {
     // Ignore errors on stop

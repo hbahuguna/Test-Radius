@@ -422,20 +422,21 @@ export interface BrowserAgentErrorEvent {
 
 export type BrowserAgentEvent = BrowserAgentStepEvent | BrowserAgentDoneEvent | BrowserAgentErrorEvent;
 
+export interface BrowserAgentRunResult {
+  run_id: string;
+  success: boolean | null;
+  error: string | null;
+  stepCount: number;
+  duration: number | null;
+}
+
 let currentAgentRunId: string | null = null;
 
 export async function startBrowserAgentRun(
   body: BrowserAgentRunRequest,
   res?: Response,
-): Promise<{ run_id: string } | null> {
+): Promise<BrowserAgentRunResult | null> {
   logger.info({ target: body.url }, "Starting browser-agent run");
-
-  if (res) {
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no");
-  }
 
   try {
     const runResponse = await fetch(`${BROWSER_USE_URL}/run`, {
@@ -466,11 +467,15 @@ export async function startBrowserAgentRun(
     logger.info({ run_id: runData.run_id }, "Browser-agent run started");
 
     // Await streaming - blocks until agent finishes
-    if (res) {
-      await streamAgentEvents(runData.run_id, res);
-    }
+    const streamResult = res ? await streamAgentEvents(runData.run_id, res) : undefined;
 
-    return { run_id: runData.run_id };
+    return {
+      run_id: runData.run_id,
+      success: streamResult?.success ?? null,
+      error: streamResult?.error ?? null,
+      stepCount: streamResult?.stepCount ?? 0,
+      duration: streamResult?.duration ?? null,
+    };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     logger.error({ error: errorMessage }, "Failed to start browser-agent run");
@@ -488,7 +493,12 @@ export async function startBrowserAgentRun(
   }
 }
 
-async function streamAgentEvents(runId: string, res: Response): Promise<void> {
+async function streamAgentEvents(runId: string, res: Response): Promise<{
+  success: boolean | null;
+  error: string | null;
+  stepCount: number;
+  duration: number | null;
+}> {
   const streamResponse = await fetch(
     `${BROWSER_USE_URL}/run/${runId}/stream`,
     {
@@ -499,20 +509,25 @@ async function streamAgentEvents(runId: string, res: Response): Promise<void> {
   );
 
   if (!streamResponse.ok) {
+    const result = { success: false, error: "Failed to connect to event stream", stepCount: 0, duration: null };
     res.write(
       `data: ${JSON.stringify({
         event: "error",
         message: "Failed to connect to event stream",
       })}\n\n`
     );
-    return;
+    return result;
   }
 
   const reader = streamResponse.body?.getReader();
-  if (!reader) return;
+  if (!reader) return { success: null, error: null, stepCount: 0, duration: null };
 
   const decoder = new TextDecoder();
   let buffer = "";
+  let stepCount = 0;
+  let finalSuccess: boolean | null = null;
+  let finalError: string | null = null;
+  let finalDuration: number | null = null;
 
   try {
     while (true) {
@@ -530,9 +545,15 @@ async function streamAgentEvents(runId: string, res: Response): Promise<void> {
             // Keep SSE format with "data: " prefix for frontend
             res.write(`data: ${JSON.stringify(event)}\n\n`);
 
-            // Return when agent completes - route handler will end response
-            if (event.event === "done" || event.event === "error") {
-              return;
+            if (event.event === "step") {
+              stepCount++;
+            } else if (event.event === "done") {
+              finalSuccess = event.success;
+              finalDuration = event.duration ?? null;
+              return { success: finalSuccess, error: null, stepCount, duration: finalDuration };
+            } else if (event.event === "error") {
+              finalError = event.message;
+              return { success: false, error: finalError, stepCount, duration: null };
             }
           } catch {
             // Ignore malformed events
@@ -543,6 +564,77 @@ async function streamAgentEvents(runId: string, res: Response): Promise<void> {
   } finally {
     reader.releaseLock();
   }
+
+  return { success: finalSuccess, error: finalError, stepCount, duration: finalDuration };
+}
+
+/**
+ * Wait for a browser-agent run to complete without an HTTP response object.
+ * Connects to the Python backend SSE stream and collects the result in memory.
+ */
+export async function waitForBrowserAgentRun(runId: string): Promise<BrowserAgentRunResult> {
+  logger.info({ run_id: runId }, "Waiting for browser-agent run (background)");
+  const result: BrowserAgentRunResult = { run_id: runId, success: null, error: null, stepCount: 0, duration: null };
+
+  try {
+    const streamResponse = await fetch(
+      `${BROWSER_USE_URL}/run/${runId}/stream`,
+      {
+        headers: { "X-Internal-Secret": INTERNAL_SECRET },
+      },
+    );
+
+    if (!streamResponse.ok) {
+      result.error = "Failed to connect to event stream";
+      return result;
+    }
+
+    const reader = streamResponse.body?.getReader();
+    if (!reader) return result;
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let stepCount = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          try {
+            const event: BrowserAgentEvent = JSON.parse(line.slice(6));
+            if (event.event === "step") {
+              stepCount++;
+            } else if (event.event === "done") {
+              result.success = event.success;
+              result.stepCount = stepCount;
+              result.duration = (event as BrowserAgentDoneEvent).duration ?? null;
+              return result;
+            } else if (event.event === "error") {
+              result.success = false;
+              result.error = event.message;
+              result.stepCount = stepCount;
+              return result;
+            }
+          } catch {
+            // Ignore malformed events
+          }
+        }
+      }
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    logger.error({ error: errorMessage }, "Background agent run failed");
+    result.success = false;
+    result.error = errorMessage;
+  }
+
+  return result;
 }
 
 export async function sendBrowserAgentChat(
@@ -580,6 +672,19 @@ export async function stopBrowserAgentRun(): Promise<void> {
     logger.error({ error }, "Failed to stop browser-agent run");
   } finally {
     currentAgentRunId = null;
+  }
+}
+
+export async function stopBrowserAgentRunWithId(runId: string): Promise<void> {
+  try {
+    await fetch(`${BROWSER_USE_URL}/run/${runId}/stop`, {
+      method: "POST",
+      headers: {
+        "X-Internal-Secret": INTERNAL_SECRET,
+      },
+    });
+  } catch (error) {
+    logger.error({ error, runId }, "Failed to stop browser-agent run");
   }
 }
 

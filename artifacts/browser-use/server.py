@@ -23,7 +23,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
@@ -92,6 +92,8 @@ class AgentStateManager:
         self.screenshots: Dict[str, str] = {}
         self.step_events: Dict[str, List[Dict]] = {}
         self.chat_queues: Dict[str, asyncio.Queue] = {}
+        self.dom_snapshots: Dict[str, str] = {}
+        self.failure_bundles: Dict[str, Dict] = {}
 
     def get_run(self, run_id: str) -> Optional[Dict]:
         return self.runs.get(run_id)
@@ -110,6 +112,26 @@ class AgentStateManager:
     def get_step_events(self, run_id: str) -> List[Dict]:
         return self.step_events.get(run_id, [])
 
+    def set_dom_snapshot(self, run_id: str, snapshot: Optional[str]):
+        if not hasattr(self, 'dom_snapshots'):
+            self.dom_snapshots: Dict[str, str] = {}
+        self.dom_snapshots[run_id] = snapshot
+
+    def get_dom_snapshot(self, run_id: str) -> Optional[str]:
+        if not hasattr(self, 'dom_snapshots'):
+            self.dom_snapshots: Dict[str, str] = {}
+        return self.dom_snapshots.get(run_id)
+
+    def set_failure_bundle(self, run_id: str, bundle: Optional[Dict]):
+        if not hasattr(self, 'failure_bundles'):
+            self.failure_bundles: Dict[str, Dict] = {}
+        self.failure_bundles[run_id] = bundle
+
+    def get_failure_bundle(self, run_id: str) -> Optional[Dict]:
+        if not hasattr(self, 'failure_bundles'):
+            self.failure_bundles: Dict[str, Dict] = {}
+        return self.failure_bundles.get(run_id)
+
 
 state = AgentStateManager()
 
@@ -127,13 +149,18 @@ def get_llm(model_id: str, poolside_api_key: Optional[str] = None):
     logger.info(f"get_llm: model_id={model_id}, poolside_api_key={'SET' if poolside_api_key else 'None'}, env_key={'SET' if POOLSIDE_API_KEY else 'EMPTY'}, resolved_key={'SET' if api_key else 'EMPTY'}")
 
     if api_key:
+        # If the caller passed the generic default model, pick a Poolside-
+        # compatible model instead.
+        poolside_model = model_id
+        if poolside_model in ('openai/gpt-4o', 'openai/gpt-4o-mini'):
+            poolside_model = 'o4-mini'
         return ChatOpenAI(
-            model=model_id,
+            model=poolside_model,
             base_url="https://inference.poolside.ai/v1",
             api_key=api_key,
             max_completion_tokens=16384,  # Poolside is a thinking model - needs extra tokens
             timeout=180,  # Poolside thinking model takes longer
-            reasoning_models=[model_id, 'o4-mini', 'o3', 'o3-mini', 'o1', 'o1-pro', 'o3-pro', 'gpt-5', 'gpt-5-mini', 'gpt-5-nano'],
+            reasoning_models=[poolside_model, 'o4-mini', 'o3', 'o3-mini', 'o1', 'o1-pro', 'o3-pro', 'gpt-5', 'gpt-5-mini', 'gpt-5-nano'],
         )
     elif "openrouter" in model_id.lower():
         return ChatOpenAI(
@@ -186,12 +213,67 @@ def format_model_output(output) -> Dict[str, Any]:
 
     if hasattr(output, 'action') and output.action:
         for action in output.action:
+            raw = str(action)
+            if hasattr(action, 'model_dump'):
+                try:
+                    raw = action.model_dump(mode='json', exclude_none=True)
+                except Exception:
+                    raw = str(action)
             result["actions"].append({
                 "name": format_action_name(action),
-                "raw": action.model_dump(exclude_none=True) if hasattr(action, 'model_dump') else str(action),
+                "raw": raw,
             })
 
     return result
+
+
+def extract_root_cause(error: Exception) -> str:
+    """Extract a machine-readable root cause string from an exception."""
+    if error is None:
+        raise TypeError("extract_root_cause requires a non-None exception")
+    error_str = str(error).lower()
+
+    if "stale element" in error_str:
+        return "stale_element"
+    if "element not found" in error_str or "no such element" in error_str or "elementnotfound" in error_str:
+        return "element_not_found"
+    if "timeout" in error_str or "timed out" in error_str:
+        return "timeout"
+    if "assertion" in error_str or "assert " in error_str:
+        return "assertion_error"
+    if "navigation" in error_str or "net::err" in error_str or "net_err" in error_str:
+        return "navigation_error"
+    return "unknown_error"
+
+
+def generate_fix_suggestion(root_cause: str) -> str:
+    """Generate a human-readable fix suggestion based on root cause."""
+    suggestions = {
+        "element_not_found": "Wait for the element to appear using an explicit wait, or check if the element is inside an iframe/shadow DOM. Consider scrolling the element into view before interacting.",
+        "timeout": "Increase the timeout duration or check network connectivity. The page may be loading slowly. Consider simplifying the task or adding wait steps.",
+        "assertion_error": "Verify the expected value against the actual page content. The page structure may have changed. Check for dynamic content that may not have loaded.",
+        "navigation_error": "Check that the URL is correct and accessible. The page may require authentication or may be temporarily down.",
+        "stale_element": "The element was removed from the DOM. Refresh the page reference and retry the interaction.",
+        "unknown_error": "Review the agent configuration and page compatibility. Check the browser console for JavaScript errors.",
+    }
+    return suggestions.get(root_cause, suggestions["unknown_error"])
+
+
+def build_failure_bundle(
+    dom_snapshot: Optional[str],
+    screenshot: Optional[str],
+    action_history: List[Dict],
+    root_cause: str,
+    fix_suggestion: str,
+) -> Dict:
+    """Build a failure bundle dict from the given components."""
+    return {
+        "dom_snapshot": dom_snapshot,
+        "screenshot": screenshot,
+        "action_history": action_history,
+        "root_cause": root_cause,
+        "fix_suggestion": fix_suggestion,
+    }
 
 
 async def run_agent_task(run_id: str, request: RunRequest):
@@ -263,6 +345,15 @@ async def run_agent_task(run_id: str, request: RunRequest):
                 "title": browser_state.title if browser_state else None,
             }
 
+            # Capture DOM snapshot for failure bundle
+            try:
+                page = await browser.get_current_page()
+                if page:
+                    dom_content = await page.content()
+                    state.set_dom_snapshot(run_id, dom_content)
+            except Exception:
+                pass
+
             state.add_step_event(run_id, event)
 
             if run_id in state.chat_queues:
@@ -315,15 +406,35 @@ async def run_agent_task(run_id: str, request: RunRequest):
                 except asyncio.QueueFull:
                     pass
 
+        # Poolside is a thinking model — it does internal reasoning, so skip
+        # agent-level thinking/flash to avoid redundant LLM calls per step.
+        is_poolside = bool(request.poolside_api_key or POOLSIDE_API_KEY)
+
+        # Flash-mode prompt is minimal and omits completion guidance the model
+        # needs. This string is appended regardless of which prompt template is
+        # loaded, so it works for both flash and full modes.
+        completion_guide = (
+            'CRITICAL COMPLETION RULES:\n'
+            '- When you find the information the user asked for in the browser '
+            'state, call done(action_result="...") to report it and finish. '
+            'Do NOT try to save to files or click random elements.\n'
+            '- If the text is already visible in <browser_state>, use it '
+            'directly. You do not need to call extract.\n'
+            '- Put ALL findings in the "text" field of the done action.\n'
+            '- The only action you need is: read what the user asked for from '
+            'the page, then call done to report it.'
+        )
+
         agent = EarlyScreenshotAgent(
             task=task_text,
             llm=llm,
             browser=browser,
             max_actions_per_step=5,
             use_vision=request.use_vision,
-            use_thinking=False,  # Disable thinking for speed
-            flash_mode=True,  # Skip evaluation/thinking, use memory only
+            use_thinking=not is_poolside,
+            flash_mode=is_poolside,
             llm_timeout=180,
+            extend_system_message=completion_guide,
             register_new_step_callback=step_callback,
             register_done_callback=done_callback,
             on_initial_screenshot=on_initial_screenshot,
@@ -335,20 +446,103 @@ async def run_agent_task(run_id: str, request: RunRequest):
 
         try:
             history = await agent.run(max_steps=request.max_steps)
-            logger.info(f"Agent run completed: success={history.is_successful() if hasattr(history, 'is_successful') else 'unknown'}")
+            success = history.is_successful() if hasattr(history, 'is_successful') else True
+            has_errors = history.has_errors() if hasattr(history, 'has_errors') else False
+            judgement = history.judgement() if hasattr(history, 'judgement') else None
+            judge_failed = judgement is not None and isinstance(judgement, dict) and not judgement.get("verdict", True)
+            logger.info(f"Agent run completed: success={success}, has_errors={has_errors}, judge_failed={judge_failed}, nav_failed={nav_failed}")
             state.runs[run_id]["status"] = "completed"
-            state.runs[run_id]["success"] = history.is_successful() if hasattr(history, 'is_successful') else True
+            state.runs[run_id]["success"] = success
+
+            nav_failed = state.runs[run_id].get("_nav_failed", False)
+            if not success or has_errors or judge_failed or nav_failed:
+                history_errors = history.errors() if hasattr(history, 'errors') else []
+                first_error = next((e for e in history_errors if e is not None), None)
+                judge_reason = judgement.get("failure_reason", "") or judgement.get("reasoning", "") if isinstance(judgement, dict) else ""
+                nav_fail_msg = "Navigation failed: the target URL could not be loaded" if nav_failed else ""
+                error_msg = first_error or judge_reason or nav_fail_msg or "Task failed: the agent was unable to complete the goal"
+                error_for_bundle = Exception(error_msg)
+                state.runs[run_id]["status"] = "failed"
+                state.runs[run_id]["error"] = str(error_for_bundle)
+                root_cause = extract_root_cause(error_for_bundle)
+                fix_suggestion = generate_fix_suggestion(root_cause)
+                failure_bundle = build_failure_bundle(
+                    dom_snapshot=state.get_dom_snapshot(run_id),
+                    screenshot=state.screenshots.get(run_id),
+                    action_history=state.get_step_events(run_id),
+                    root_cause=root_cause,
+                    fix_suggestion=fix_suggestion,
+                )
+                state.set_failure_bundle(run_id, failure_bundle)
+
+                event = {
+                    "event": "error",
+                    "message": str(error_for_bundle),
+                    "failure_bundle": failure_bundle,
+                }
+                state.add_step_event(run_id, event)
+                if run_id in state.chat_queues:
+                    try:
+                        state.chat_queues[run_id].put_nowait(event)
+                    except asyncio.QueueFull:
+                        pass
         except Exception as e:
             logger.error(f"Agent run failed: {e}", exc_info=True)
             state.runs[run_id]["status"] = "failed"
             state.runs[run_id]["error"] = str(e)
-            
+
+            # Capture DOM snapshot for failure bundle
+            try:
+                page = await browser.get_current_page()
+                if page:
+                    dom_content = await page.content()
+                    state.set_dom_snapshot(run_id, dom_content)
+            except Exception:
+                pass
+
+            # Build failure bundle
+            root_cause = extract_root_cause(e)
+            fix_suggestion = generate_fix_suggestion(root_cause)
+            failure_bundle = build_failure_bundle(
+                dom_snapshot=state.get_dom_snapshot(run_id),
+                screenshot=state.screenshots.get(run_id),
+                action_history=state.get_step_events(run_id),
+                root_cause=root_cause,
+                fix_suggestion=fix_suggestion,
+            )
+            state.set_failure_bundle(run_id, failure_bundle)
+
             event = {
                 "event": "error",
                 "message": str(e),
+                "failure_bundle": failure_bundle,
             }
             state.add_step_event(run_id, event)
-            
+
+            # Detect navigation failures from browser state
+            if browser_state:
+                nav_error_keywords = [
+                    "err_name_not_resolved", "err_connection_refused",
+                    "err_connection_reset", "err_connection_closed",
+                    "err_connection_timed_out", "err_timed_out",
+                    "dns_probe_finished", "this site can't be reached",
+                    "navigation failed", "net::err_",
+                ]
+                url_lower = (browser_state.url or "").lower()
+                title_lower = (browser_state.title or "").lower()
+                has_browser_errors = (
+                    hasattr(browser_state, 'browser_errors')
+                    and isinstance(browser_state.browser_errors, list)
+                    and len(browser_state.browser_errors) > 0
+                )
+                if (
+                    has_browser_errors
+                    or "chrome-error" in url_lower
+                    or any(kw in url_lower for kw in nav_error_keywords)
+                    or any(kw in title_lower for kw in nav_error_keywords)
+                ):
+                    state.runs[run_id]["_nav_failed"] = True
+
             if run_id in state.chat_queues:
                 try:
                     state.chat_queues[run_id].put_nowait(event)
@@ -360,9 +554,22 @@ async def run_agent_task(run_id: str, request: RunRequest):
         state.runs[run_id]["status"] = "failed"
         state.runs[run_id]["error"] = str(e)
 
+        # Build failure bundle (browser may not be available at this level)
+        root_cause = extract_root_cause(e)
+        fix_suggestion = generate_fix_suggestion(root_cause)
+        failure_bundle = build_failure_bundle(
+            dom_snapshot=state.get_dom_snapshot(run_id),
+            screenshot=state.screenshots.get(run_id),
+            action_history=state.get_step_events(run_id),
+            root_cause=root_cause,
+            fix_suggestion=fix_suggestion,
+        )
+        state.set_failure_bundle(run_id, failure_bundle)
+
         event = {
             "event": "error",
             "message": str(e),
+            "failure_bundle": failure_bundle,
         }
         state.add_step_event(run_id, event)
 
@@ -548,6 +755,41 @@ async def get_run_steps(
         raise HTTPException(status_code=404, detail="Run not found")
 
     return {"steps": state.get_step_events(run_id)}
+
+
+def _safe_json(v, depth=0):
+    """Recursively convert a value to a JSON-safe form, truncating at depth 20."""
+    if depth > 20:
+        return str(v)[:500]
+    if v is None or isinstance(v, (bool, int, float)):
+        return v
+    if isinstance(v, str):
+        return v
+    if isinstance(v, (list, tuple)):
+        return [_safe_json(i, depth + 1) for i in v]
+    if isinstance(v, dict):
+        return {str(k): _safe_json(val, depth + 1) for k, val in v.items()}
+    return str(v)[:500]
+
+
+@app.get("/run/{run_id}/failure-bundle")
+async def get_failure_bundle(
+    run_id: str,
+    _: bool = Depends(verify_internal_secret),
+):
+    """Get the failure bundle for a run, if one was generated."""
+    if run_id not in state.runs:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    bundle = state.get_failure_bundle(run_id)
+    safe = _safe_json({
+        "run_id": run_id,
+        "failure_bundle": bundle,
+    })
+    return Response(
+        content=json.dumps(safe, ensure_ascii=False),
+        media_type="application/json",
+    )
 
 
 @app.get("/screenshot")

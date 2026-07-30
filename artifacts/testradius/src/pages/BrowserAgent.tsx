@@ -66,6 +66,7 @@ export function BrowserAgent() {
   const abortRef = useRef<AbortController | null>(null);
   const screenshotTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasReceivedFirstStep = useRef(false);
+  const currentRunIdRef = useRef<string | null>(null);
 
   // Load API keys and run history on mount
   useEffect(() => {
@@ -196,7 +197,9 @@ export function BrowserAgent() {
           onEvent: (event) => {
             setEvents((prev) => [...prev, event]);
 
-            if (event.event === "loading") {
+            if (event.event === "started") {
+              currentRunIdRef.current = event.run_id;
+            } else if (event.event === "loading") {
               if (!hasReceivedFirstStep.current) {
                 hasReceivedFirstStep.current = true;
                 if (screenshotTimer.current) {
@@ -253,6 +256,10 @@ export function BrowserAgent() {
     } finally {
       setChatLoading(false);
       abortRef.current = null;
+      currentRunIdRef.current = null;
+      getBrowserAgentRunHistory()
+        .then(setHistory)
+        .catch(() => {});
     }
   }, [url, goal, modelProvider, modelId, assertions]);
 
@@ -263,8 +270,12 @@ export function BrowserAgent() {
     }
     hasReceivedFirstStep.current = false;
     abortRef.current?.abort();
-    await stopBrowserAgentRun();
+    await stopBrowserAgentRun(currentRunIdRef.current ?? undefined);
     setStatus("stopped");
+    currentRunIdRef.current = null;
+    getBrowserAgentRunHistory()
+      .then(setHistory)
+      .catch(() => {});
   }, []);
 
   const handleClear = useCallback(() => {
@@ -292,7 +303,7 @@ export function BrowserAgent() {
       setEvents((prev) => [...prev, userMsg]);
 
       setChatLoading(true);
-      const success = await sendBrowserAgentChat(message);
+      const success = await sendBrowserAgentChat(message, currentRunIdRef.current ?? undefined);
       setChatLoading(false);
 
       if (!success) {

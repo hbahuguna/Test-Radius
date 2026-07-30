@@ -34,6 +34,21 @@ export const agenticRunsTable = pgTable("agentic_runs", {
   assertionResults: jsonb("assertion_results"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   completedAt: timestamp("completed_at"),
+
+  // Phase 4 — TestSprite feature parity columns
+  groupId: uuid("group_id"),
+  scheduleId: uuid("schedule_id"),
+  stepCount: integer("step_count").default(0),
+  duration: integer("duration_seconds").default(0),
+  failureBundle: jsonb("failure_bundle"),
+  videoUrl: text("video_url"),
+  metadata: jsonb("metadata"),
+
+  // TRP4-23 — batch grouping for parallel runs
+  batchId: uuid("batch_id"),
+
+  // Python backend run_id (for chat/stop coordination)
+  pythonRunId: text("python_run_id"),
 });
 
 export const insertAgenticRunSchema = createInsertSchema(agenticRunsTable).omit({
