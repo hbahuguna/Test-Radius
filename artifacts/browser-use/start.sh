@@ -16,7 +16,7 @@ source .venv/bin/activate
 
 # Install dependencies
 echo "Installing dependencies..."
-uv pip install --quiet fastapi uvicorn pydantic python-dotenv langchain-openai langchain-anthropic playwright psutil pydantic-settings pyotp pillow zstandard aiohttp anyio httpx google-genai anthropic groq ollama google-api-python-client google-auth google-auth-oauthlib mcp pypdf reportlab cloudpickle markdownify python-docx bubus cdp-use rich
+uv pip install --quiet fastapi uvicorn pydantic python-dotenv langchain-openai langchain-anthropic 'playwright==1.55.0' psutil pydantic-settings pyotp pillow zstandard aiohttp anyio httpx google-genai anthropic groq ollama google-api-python-client google-auth google-auth-oauthlib mcp pypdf reportlab cloudpickle markdownify python-docx bubus cdp-use rich
 
 # Install playwright browsers
 echo "Installing Playwright browsers..."

@@ -21,6 +21,11 @@ import {
   getBrowserAgentScreenshot,
   getBrowserAgentRunHistory,
   getBrowserAgentApiKeys,
+  generatePlaywrightCode,
+  savePlaywrightCode,
+  repairPlaywrightCode,
+  runPlaywrightCode,
+  streamPlaywrightCodeRun,
   type AgentEvent,
   type AgentStepEvent,
   type AgentLoadingEvent,
@@ -28,6 +33,7 @@ import {
   type AgentErrorEvent,
   type UserApiKey,
   type BrowserAgentRunHistoryItem,
+  type GeneratedPlaywrightCode,
 } from "@/lib/browser-agent-api";
 import { type Assertion } from "@/lib/agentic-api";
 import { toast } from "sonner";
@@ -62,6 +68,15 @@ export function BrowserAgent() {
   const [currentTitle, setCurrentTitle] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
+  const [completedRunId, setCompletedRunId] = useState<string | null>(null);
+  const [generatedCode, setGeneratedCode] = useState<string | null>(null);
+  const [codeWarnings, setCodeWarnings] = useState<string[]>([]);
+  const [traceDiagnostics, setTraceDiagnostics] = useState<GeneratedPlaywrightCode["traceDiagnostics"]>(undefined);
+  const [codeLoading, setCodeLoading] = useState(false);
+  const [scriptId, setScriptId] = useState<string | null>(null);
+  const [scriptVersion, setScriptVersion] = useState<number | null>(null);
+  const [codeRunEvents, setCodeRunEvents] = useState<Record<string, unknown>[]>([]);
+  const [codeRunLoading, setCodeRunLoading] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const screenshotTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -159,6 +174,13 @@ export function BrowserAgent() {
     setEvents([]);
     setScreenshot(null);
     setRunError(null);
+    setCompletedRunId(null);
+    setGeneratedCode(null);
+    setCodeWarnings([]);
+    setTraceDiagnostics(undefined);
+    setScriptId(null);
+    setScriptVersion(null);
+    setCodeRunEvents([]);
     setCurrentUrl(url);
     setCurrentTitle(null);
 
@@ -195,7 +217,9 @@ export function BrowserAgent() {
         {
           signal: controller.signal,
           onEvent: (event) => {
-            setEvents((prev) => [...prev, event]);
+            if (event.event !== "started") {
+              setEvents((prev) => [...prev, event]);
+            }
 
             if (event.event === "started") {
               currentRunIdRef.current = event.run_id;
@@ -224,6 +248,7 @@ export function BrowserAgent() {
               if (event.url) setCurrentUrl(event.url);
               if (event.title) setCurrentTitle(event.title);
             } else if (event.event === "done") {
+              setCompletedRunId(currentRunIdRef.current);
               setStatus(event.success ? "completed" : "failed");
             } else if (event.event === "error") {
               setStatus("failed");
@@ -290,7 +315,76 @@ export function BrowserAgent() {
     setRunError(null);
     setCurrentUrl(null);
     setCurrentTitle(null);
+    setCompletedRunId(null);
+    setGeneratedCode(null);
+    setCodeWarnings([]);
+    setTraceDiagnostics(undefined);
+    setScriptId(null);
+    setScriptVersion(null);
+    setCodeRunEvents([]);
   }, []);
+
+  const handleGenerateCode = useCallback(async () => {
+    if (!completedRunId || codeLoading) return;
+    setCodeLoading(true);
+    try {
+      const result = await generatePlaywrightCode(completedRunId);
+      setGeneratedCode(result.code);
+      setCodeWarnings(result.warnings);
+      setTraceDiagnostics(result.traceDiagnostics);
+      setScriptId(result.scriptId);
+      setScriptVersion(result.version);
+      toast.success("Playwright code generated from the agent trace");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Code generation failed");
+    } finally {
+      setCodeLoading(false);
+    }
+  }, [completedRunId, codeLoading]);
+
+  const handleSaveCode = useCallback(async () => {
+    if (!scriptId || generatedCode === null) return;
+    try {
+      const saved = await savePlaywrightCode(scriptId, generatedCode);
+      setScriptId(saved.scriptId);
+      setScriptVersion(saved.version);
+      setCodeWarnings(saved.warnings);
+      toast.success(`Saved script version ${saved.version}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to save script");
+    }
+  }, [generatedCode, scriptId]);
+
+  const handleRepairCode = useCallback(async () => {
+    if (!scriptId) return;
+    try {
+      const repaired = await repairPlaywrightCode(scriptId, String(codeRunEvents.find((event) => event.event === "code_step_failed")?.error || ""));
+      setScriptId(repaired.scriptId);
+      setScriptVersion(repaired.version);
+      setGeneratedCode(repaired.code);
+      setCodeWarnings(repaired.warnings);
+      toast.success(`Created repaired script version ${repaired.version}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to repair script");
+    }
+  }, [codeRunEvents, scriptId]);
+
+  const handleRunCode = useCallback(async () => {
+    if (!scriptId || codeRunLoading) return;
+    setCodeRunLoading(true);
+    setCodeRunEvents([]);
+    try {
+      const run = await runPlaywrightCode(scriptId, url);
+      await streamPlaywrightCodeRun(run.codeRunId, (event) => {
+        setCodeRunEvents((previous) => [...previous, event]);
+        if (typeof event.screenshot === "string") setScreenshot(event.screenshot);
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Code execution failed");
+    } finally {
+      setCodeRunLoading(false);
+    }
+  }, [codeRunLoading, scriptId, url]);
 
   const handleChat = useCallback(
     async (message: string) => {
@@ -429,6 +523,11 @@ export function BrowserAgent() {
                         <p className="text-sm text-muted-foreground">
                           {events.filter((e) => e.event === "step").length} steps taken
                         </p>
+                        {completedRunId && (
+                          <Button size="sm" onClick={handleGenerateCode} disabled={codeLoading}>
+                            {codeLoading ? "Generating…" : "Generate Playwright Code"}
+                          </Button>
+                        )}
                       </div>
                     )}
                   </CardContent>
@@ -437,7 +536,7 @@ export function BrowserAgent() {
             </div>
 
             {/* Right Column: Browser + Chat */}
-            <div className="flex flex-col gap-4 h-[calc(100vh-160px)]">
+            <div className="flex min-w-0 flex-col gap-4">
               {/* Live Browser View */}
               <Card className="rounded-xl border-border shadow-lg h-[400px] shrink-0 overflow-hidden">
                 <CardContent className="p-0 h-full">
@@ -451,11 +550,11 @@ export function BrowserAgent() {
               </Card>
 
               {/* Agent Activity (Steps) */}
-              <Card className="rounded-xl border-border shadow-lg flex-1 min-h-0 overflow-hidden">
+              <Card className="rounded-xl border-border shadow-lg flex-none min-w-0 h-[min(60vh,720px)] min-h-[360px] sm:min-h-[420px] overflow-hidden">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Agent Activity</CardTitle>
                 </CardHeader>
-                <CardContent className="p-0 h-[calc(100%-60px)]">
+                <CardContent className="min-w-0 p-0 h-[calc(100%-60px)] overflow-hidden">
                   <AgentChatPanel steps={events} status={status} />
                 </CardContent>
               </Card>
@@ -479,6 +578,48 @@ export function BrowserAgent() {
               )}
             </div>
           </div>
+
+          {generatedCode && (
+            <Card className="mt-6 rounded-xl border-border shadow-lg">
+              <CardHeader>
+                <CardTitle>Generated Playwright Code</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Generated from the completed Browser Agent action trace. Review and edit before reuse.
+                </p>
+                {traceDiagnostics && (
+                  <p className="text-xs text-muted-foreground">
+                    Trace: {traceDiagnostics.stepCount} steps, {traceDiagnostics.actionCount} actions ({traceDiagnostics.source})
+                  </p>
+                )}
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button size="sm" onClick={handleSaveCode} disabled={!scriptId}>Save Version {scriptVersion ?? ""}</Button>
+                  <Button size="sm" variant="secondary" onClick={handleRunCode} disabled={!scriptId || codeRunLoading}>
+                    {codeRunLoading ? "Running…" : "Run Code"}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={handleRepairCode} disabled={!scriptId}>Repair From Trace</Button>
+                </div>
+                {codeWarnings.length > 0 && (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+                    {codeWarnings.map((warning) => <p key={warning}>{warning}</p>)}
+                  </div>
+                )}
+                <Textarea
+                  value={generatedCode}
+                  onChange={(event) => setGeneratedCode(event.target.value)}
+                  spellCheck={false}
+                  className="min-h-[560px] resize-y bg-zinc-950 p-4 font-mono text-sm text-zinc-100"
+                  aria-label="Generated Playwright code editor"
+                />
+                {codeRunEvents.length > 0 && (
+                  <pre className="max-h-[260px] overflow-y-auto rounded-lg bg-muted p-3 text-xs whitespace-pre-wrap">
+                    {codeRunEvents.map((event, index) => `${index + 1}. ${String(event.event)}${event.name ? `: ${String(event.name)}` : ""}${event.error ? ` — ${String(event.error)}` : ""}`).join("\n")}
+                  </pre>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Run History */}
           <Card className="mt-6 rounded-xl border-border shadow-lg">

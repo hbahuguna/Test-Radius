@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { db } from "@workspace/db";
-import { agenticRunsTable, agenticBatchesTable, userApiKeysTable } from "@workspace/db/schema";
+import { agenticRunsTable, agenticBatchesTable, codeRunsTable, generatedTestScriptsTable, userApiKeysTable } from "@workspace/db/schema";
 import { eq, desc, and, inArray } from "drizzle-orm";
 import { requireSignedUp } from "../middlewares/auth";
 import { getOrCreateUser } from "../lib/auth";
@@ -12,10 +13,16 @@ import {
   getBrowserAgentScreenshot,
   getBrowserAgentRunStatus,
   waitForBrowserAgentRun,
+  getBrowserAgentRunSteps,
+  proxyBrowserAgentVideo,
   type BrowserAgentRunRequest,
 } from "../lib/browser-use-client";
 import { decryptKey } from "../lib/crypto";
 import { logger } from "../lib/logger";
+import { generatePlaywrightScript, type GeneratedTraceStep } from "../lib/playwright-script";
+import { getCodeRun, isWorkerAvailable, startCodeRun, stopCodeRun } from "../lib/code-runner";
+import { repairPlaywrightScript } from "../lib/script-repair";
+import { refineLocatorsWithStagehand } from "../lib/stagehand-client";
 
 const router: IRouter = Router();
 
@@ -51,12 +58,15 @@ router.post("/run", async (req: Request, res: Response) => {
   logger.info({ userId: authUser.id, url }, "Starting browser-agent run");
 
   const modelId = model_id || "poolside/laguna-xs-2.1";
-  const isPoolsideModel = typeof modelId === "string" && modelId.startsWith("poolside/");
+  const requestedProvider = typeof req.body?.model_provider === "string"
+    ? req.body.model_provider.toLowerCase()
+    : null;
+  const isPoolsideModel = requestedProvider === "poolside"
+    || (!requestedProvider && typeof modelId === "string" && modelId.startsWith("poolside/"));
   const effectiveUseVision = use_vision && !isPoolsideModel;
 
-  const modelProvider = typeof modelId === "string" && modelId.includes("/")
-    ? modelId.split("/")[0]
-    : "poolside";
+  const modelProvider = requestedProvider
+    || (typeof modelId === "string" && modelId.includes("/") ? modelId.split("/")[0].toLowerCase() : "poolside");
 
   const user = (await getOrCreateUser(authUser))!;
   const keyRow = await db
@@ -79,7 +89,8 @@ router.post("/run", async (req: Request, res: Response) => {
     max_steps: max_steps || 30,
     use_vision: effectiveUseVision,
     keep_alive: keep_alive ?? true,
-    ...(byokKey ? { poolside_api_key: byokKey } : {}),
+    ...(byokKey && modelProvider === "poolside" ? { poolside_api_key: byokKey } : {}),
+    ...(byokKey && modelProvider === "opencode" ? { opencode_api_key: byokKey } : {}),
     ...(cache_key ? { cache_key } : {}),
   };
 
@@ -101,7 +112,20 @@ router.post("/run", async (req: Request, res: Response) => {
   res.setHeader("X-Accel-Buffering", "no");
   res.write(`data: ${JSON.stringify({ event: "started", run_id: run.id })}\n\n`);
 
-  const result = await startBrowserAgentRun(runRequest, res);
+  const result = await startBrowserAgentRun(runRequest, res, {
+    onTrace: async (actionTrace) => {
+      await db
+        .update(agenticRunsTable)
+        .set({
+          metadata: {
+            ...(run.metadata && typeof run.metadata === "object" ? run.metadata as Record<string, unknown> : {}),
+            traceVersion: 1,
+            actionTrace,
+          },
+        })
+        .where(eq(agenticRunsTable.id, run.id));
+    },
+  });
 
   if (result) {
     await db
@@ -113,6 +137,12 @@ router.post("/run", async (req: Request, res: Response) => {
         error: result.error,
         stepCount: result.stepCount,
         duration: result.duration,
+        videoUrl: result.videoPath ? `/api/browser-agent/run/${run.id}/video` : null,
+        metadata: {
+          ...(run.metadata && typeof run.metadata === "object" ? run.metadata as Record<string, unknown> : {}),
+          traceVersion: 1,
+          actionTrace: result.actionTrace,
+        },
         completedAt: new Date(),
       })
       .where(eq(agenticRunsTable.id, run.id));
@@ -278,6 +308,357 @@ router.get("/runs", async (req: Request, res: Response) => {
     .orderBy(desc(agenticRunsTable.createdAt))
     .limit(limit);
   res.json({ runs });
+});
+
+router.get("/run/:id/video", async (req: Request, res: Response) => {
+  const authUser = req.user!;
+  const runId = req.params.id as string;
+  const user = (await getOrCreateUser(authUser))!;
+  const [run] = await db
+    .select()
+    .from(agenticRunsTable)
+    .where(and(eq(agenticRunsTable.id, runId), eq(agenticRunsTable.userId, user.id)))
+    .limit(1);
+
+  if (!run || !run.pythonRunId || !run.videoUrl) {
+    res.status(404).json({ error: "video_not_found" });
+    return;
+  }
+
+  const status = await proxyBrowserAgentVideo(run.pythonRunId, res);
+  if (status === 404) {
+    res.status(404).json({ error: "video_not_found" });
+  } else if (status >= 400 && !res.writableEnded) {
+    res.status(502).json({ error: "video_unavailable" });
+  }
+});
+
+router.post("/runs/:id/generate-code", async (req: Request, res: Response) => {
+  const authUser = req.user!;
+  const runId = req.params.id as string;
+  const user = (await getOrCreateUser(authUser))!;
+  const [run] = await db
+    .select()
+    .from(agenticRunsTable)
+    .where(and(eq(agenticRunsTable.id, runId), eq(agenticRunsTable.userId, user.id)))
+    .limit(1);
+
+  if (!run) {
+    res.status(404).json({ error: "run_not_found" });
+    return;
+  }
+
+  const metadata = run.metadata && typeof run.metadata === "object"
+    ? run.metadata as Record<string, unknown>
+    : {};
+  const actionTrace = Array.isArray(metadata.actionTrace)
+    ? metadata.actionTrace as GeneratedTraceStep[]
+    : [];
+
+  if (actionTrace.length === 0 && run.pythonRunId) {
+    const steps = await getBrowserAgentRunSteps(run.pythonRunId);
+    const recoveredTrace = steps.flatMap((step) => {
+      const actions: unknown[] = Array.isArray(step.action_trace)
+        ? step.action_trace as unknown[]
+        : step.model_output && typeof step.model_output === "object"
+          && Array.isArray((step.model_output as Record<string, unknown>).actions)
+          ? ((step.model_output as Record<string, unknown>).actions as Array<Record<string, unknown>>).map((action) => ({
+              action: typeof action.action === "string" ? action.action : action.name,
+              raw: action.raw ?? action,
+              element: action.element ?? null,
+            }))
+          : [];
+      if (actions.length === 0) return [];
+      return [{
+        stepNumber: typeof step.step_number === "number" ? step.step_number : 0,
+        url: typeof step.url === "string" ? step.url : null,
+        title: typeof step.title === "string" ? step.title : null,
+        actions,
+      }] as GeneratedTraceStep[];
+    });
+    if (recoveredTrace.length > 0) {
+      actionTrace.push(...recoveredTrace);
+      await db.update(agenticRunsTable).set({
+        metadata: { ...metadata, traceVersion: 1, actionTrace },
+      }).where(eq(agenticRunsTable.id, run.id));
+    }
+  }
+
+  const traceDiagnostics = {
+    source: actionTrace.length > 0
+      ? (Array.isArray(metadata.actionTrace) && metadata.actionTrace.length > 0 ? "database" : "python_steps")
+      : "none",
+    stepCount: actionTrace.length,
+    actionCount: actionTrace.reduce((count, step) => count + step.actions.length, 0),
+    pythonRunId: run.pythonRunId,
+  };
+  logger.info({ runId: run.id, ...traceDiagnostics }, "Preparing Playwright code from browser trace");
+
+  const generated = generatePlaywrightScript(run.url, run.goal, actionTrace);
+  if (actionTrace.length === 0) {
+    generated.warnings.unshift("No browser action trace was available. This is a starter scaffold based on the run URL and goal. Check that the API server was restarted after the latest build and that the browser-use service stayed running for the completed run.");
+  }
+  let scriptId: string | null = null;
+  let scriptVersion = 0;
+  try {
+    const [script] = await db
+      .insert(generatedTestScriptsTable)
+      .values({
+        userId: user.id,
+        sourceRunId: run.id,
+        version: 1,
+        code: generated.code,
+        description: run.goal,
+        warnings: generated.warnings,
+      })
+      .returning();
+    scriptId = script?.id ?? null;
+    scriptVersion = script?.version ?? 1;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("generated_test_scripts")) throw error;
+    generated.warnings.unshift("Script persistence is unavailable until the generated_test_scripts database migration is applied.");
+    logger.error({ error, runId: run.id }, "Generated code could not be persisted");
+  }
+  const updatedMetadata = {
+    ...metadata,
+    generatedPlaywrightCode: generated.code,
+    generatedPlaywrightWarnings: generated.warnings,
+    generatedAt: new Date().toISOString(),
+  };
+
+  await db
+    .update(agenticRunsTable)
+    .set({ metadata: updatedMetadata })
+    .where(eq(agenticRunsTable.id, run.id));
+
+  res.json({
+    scriptId,
+    version: scriptVersion,
+    runId: run.id,
+    language: "typescript",
+    framework: "playwright",
+    code: generated.code,
+    warnings: generated.warnings,
+    traceDiagnostics,
+  });
+});
+
+router.get("/scripts/:id", async (req: Request, res: Response) => {
+  const user = (await getOrCreateUser(req.user!))!;
+  const [script] = await db
+    .select()
+    .from(generatedTestScriptsTable)
+    .where(and(eq(generatedTestScriptsTable.id, req.params.id as string), eq(generatedTestScriptsTable.userId, user.id)))
+    .orderBy(desc(generatedTestScriptsTable.version))
+    .limit(1);
+  if (!script) {
+    res.status(404).json({ error: "script_not_found" });
+    return;
+  }
+  res.json(script);
+});
+
+router.put("/scripts/:id", async (req: Request, res: Response) => {
+  const user = (await getOrCreateUser(req.user!))!;
+  const [current] = await db
+    .select()
+    .from(generatedTestScriptsTable)
+    .where(and(eq(generatedTestScriptsTable.id, req.params.id as string), eq(generatedTestScriptsTable.userId, user.id)))
+    .orderBy(desc(generatedTestScriptsTable.version))
+    .limit(1);
+  const code = typeof req.body?.code === "string" ? req.body.code : "";
+  if (!current || !code || code.length > 250_000) {
+    res.status(400).json({ error: "invalid_script" });
+    return;
+  }
+  const [saved] = await db
+    .insert(generatedTestScriptsTable)
+    .values({
+      userId: user.id,
+      sourceRunId: current.sourceRunId,
+      version: current.version + 1,
+      name: req.body.name || current.name,
+      code,
+      description: current.description,
+      warnings: current.warnings,
+    })
+    .returning();
+  res.json(saved);
+});
+
+router.post("/scripts/:id/repair", async (req: Request, res: Response) => {
+  const user = (await getOrCreateUser(req.user!))!;
+  const [script] = await db
+    .select()
+    .from(generatedTestScriptsTable)
+    .where(and(eq(generatedTestScriptsTable.id, req.params.id as string), eq(generatedTestScriptsTable.userId, user.id)))
+    .orderBy(desc(generatedTestScriptsTable.version))
+    .limit(1);
+  if (!script) {
+    res.status(404).json({ error: "script_not_found" });
+    return;
+  }
+  const [run] = await db.select().from(agenticRunsTable).where(eq(agenticRunsTable.id, script.sourceRunId)).limit(1);
+  const metadata = run?.metadata && typeof run.metadata === "object" ? run.metadata as Record<string, unknown> : {};
+  const trace = Array.isArray(metadata.actionTrace) ? metadata.actionTrace as GeneratedTraceStep[] : [];
+  if (!run || trace.length === 0) {
+    res.status(422).json({ error: "trace_unavailable" });
+    return;
+  }
+  let generated = generatePlaywrightScript(run.url, run.goal, trace);
+  let explanation = "Regenerated from the source trace.";
+  const error = typeof req.body?.error === "string" ? req.body.error : "";
+  try {
+    const provider = run.modelUsed || "opencode";
+    const [keyRow] = await db.select().from(userApiKeysTable).where(and(eq(userApiKeysTable.userId, user.id), eq(userApiKeysTable.provider, provider))).limit(1);
+    if (keyRow) {
+      const repaired = await repairPlaywrightScript({
+        code: script.code,
+        error,
+        trace,
+        provider,
+        apiKey: decryptKey(JSON.parse(keyRow.encryptedKey)),
+      });
+      generated = { code: repaired.code, warnings: repaired.warnings };
+      explanation = repaired.explanation;
+    }
+  } catch (repairError) {
+    logger.warn({ repairError, scriptId: script.id }, "Model-assisted repair failed; using deterministic regeneration");
+    generated.warnings.unshift("Model-assisted repair was unavailable; regenerated from the original trace.");
+  }
+  generated.warnings.unshift(error ? `Repair input: ${error.slice(0, 300)}` : explanation);
+  const [repaired] = await db.insert(generatedTestScriptsTable).values({
+    userId: user.id,
+    sourceRunId: script.sourceRunId,
+    version: script.version + 1,
+    name: script.name,
+    code: generated.code,
+    description: script.description,
+    warnings: generated.warnings,
+  }).returning();
+  res.json({ ...repaired, explanation });
+});
+
+router.post("/scripts/:id/run", async (req: Request, res: Response) => {
+  const user = (await getOrCreateUser(req.user!))!;
+  const [script] = await db
+    .select()
+    .from(generatedTestScriptsTable)
+    .where(and(eq(generatedTestScriptsTable.id, req.params.id as string), eq(generatedTestScriptsTable.userId, user.id)))
+    .orderBy(desc(generatedTestScriptsTable.version))
+    .limit(1);
+  if (!script) {
+    res.status(404).json({ error: "script_not_found" });
+    return;
+  }
+  if (!isWorkerAvailable()) {
+    res.status(503).json({ error: "worker_unavailable", message: "Build the API server before starting code execution." });
+    return;
+  }
+  const url = typeof req.body?.url === "string" ? req.body.url : "";
+  if (!url) {
+    res.status(400).json({ error: "url_required" });
+    return;
+  }
+  const codeRunId = randomUUID();
+  await db.insert(codeRunsTable).values({
+    id: codeRunId,
+    userId: user.id,
+    scriptId: script.id,
+    status: "queued",
+    events: [],
+  });
+  startCodeRun({ id: codeRunId, code: script.code, url, userId: user.id });
+  res.status(202).json({ codeRunId, scriptId: script.id, version: script.version });
+});
+
+router.post("/scripts/:id/refine-locators", async (req: Request, res: Response) => {
+  const user = (await getOrCreateUser(req.user!))!;
+  const [script] = await db.select().from(generatedTestScriptsTable)
+    .where(and(eq(generatedTestScriptsTable.id, req.params.id as string), eq(generatedTestScriptsTable.userId, user.id)))
+    .orderBy(desc(generatedTestScriptsTable.version)).limit(1);
+  if (!script) {
+    res.status(404).json({ error: "script_not_found" });
+    return;
+  }
+  const [run] = await db.select().from(agenticRunsTable).where(eq(agenticRunsTable.id, script.sourceRunId)).limit(1);
+  const provider = run?.modelUsed || "opencode";
+  const [keyRow] = await db.select().from(userApiKeysTable)
+    .where(and(eq(userApiKeysTable.userId, user.id), eq(userApiKeysTable.provider, provider))).limit(1);
+  if (!run || !keyRow) {
+    res.status(422).json({ error: "provider_key_unavailable" });
+    return;
+  }
+  const instruction = typeof req.body?.instruction === "string" && req.body.instruction.trim()
+    ? req.body.instruction
+    : "Find the most reliable Playwright locator and action for the target described by the original workflow.";
+  try {
+    const locators = await refineLocatorsWithStagehand(run.url, instruction, {
+      provider,
+      modelId: provider === "opencode" ? "big-pickle" : run.modelUsed || "gpt-4o-mini",
+      apiKey: decryptKey(JSON.parse(keyRow.encryptedKey)),
+    });
+    res.json({ scriptId: script.id, locators });
+  } catch (error) {
+    logger.warn({ error, scriptId: script.id }, "Stagehand locator refinement failed");
+    res.status(502).json({ error: "locator_refinement_failed" });
+  }
+});
+
+router.get("/code-runs/:id", async (req: Request, res: Response) => {
+  const user = (await getOrCreateUser(req.user!))!;
+  const [run] = await db.select().from(codeRunsTable).where(and(eq(codeRunsTable.id, req.params.id as string), eq(codeRunsTable.userId, user.id))).limit(1);
+  if (!run) {
+    res.status(404).json({ error: "code_run_not_found" });
+    return;
+  }
+  res.json(run);
+});
+
+router.get("/code-runs/:id/events", async (req: Request, res: Response) => {
+  const user = (await getOrCreateUser(req.user!))!;
+  const run = getCodeRun(req.params.id as string);
+  if (!run || run.userId !== user.id) {
+    res.status(404).json({ error: "code_run_not_found" });
+    return;
+  }
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  for (const event of run.events) res.write(`data: ${JSON.stringify(event)}\n\n`);
+  if (["completed", "failed", "stopped"].includes(run.status)) {
+    res.end();
+    return;
+  }
+  const onEvent = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+  const persistEvents = async () => {
+    const completedEvent = [...run.events].reverse().find((event) => event.event === "code_run_completed");
+    const status = run.status;
+    await db.update(codeRunsTable).set({
+      status,
+      events: run.events,
+      error: completedEvent && typeof completedEvent.error === "string" ? completedEvent.error : null,
+      completedAt: ["completed", "failed", "stopped"].includes(status) ? new Date() : undefined,
+    }).where(eq(codeRunsTable.id, run.id));
+  };
+  const onPersistedEvent = (event: unknown) => {
+    onEvent(event);
+    void persistEvents();
+  };
+  run.emitter.on("event", onPersistedEvent);
+  req.on("close", () => run.emitter.off("event", onPersistedEvent));
+});
+
+router.post("/code-runs/:id/stop", async (req: Request, res: Response) => {
+  const user = (await getOrCreateUser(req.user!))!;
+  const run = getCodeRun(req.params.id as string);
+  if (!run || run.userId !== user.id) {
+    res.status(404).json({ error: "code_run_not_found" });
+    return;
+  }
+  await db.update(codeRunsTable).set({ status: "stopped", completedAt: new Date() }).where(eq(codeRunsTable.id, run.id));
+  res.json({ stopped: stopCodeRun(run.id) });
 });
 
 // ============================================================

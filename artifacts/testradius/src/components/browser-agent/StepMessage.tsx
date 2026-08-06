@@ -20,7 +20,7 @@ export function StepMessage({ event, isLatest }: StepMessageProps) {
 
   return (
     <Card className={`rounded-xl border transition-all ${isLatest ? "border-primary/50 shadow-md" : "border-border"}`}>
-      <CardContent className="p-4">
+      <CardContent className="min-w-0 break-words p-4">
         {/* Step Header */}
         <div className="flex items-center gap-2 mb-3">
           <Badge variant={isLatest ? "default" : "secondary"} className="text-xs">

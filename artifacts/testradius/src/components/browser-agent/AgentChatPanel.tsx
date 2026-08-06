@@ -34,7 +34,7 @@ export function AgentChatPanel({ steps, status }: AgentChatPanelProps) {
     <div className="flex flex-col h-full">
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto space-y-4 p-4"
+        className="flex-1 min-w-0 overflow-x-hidden overflow-y-auto space-y-4 p-4"
       >
         {steps.length === 0 && status === "idle" && (
           <div className="flex items-center justify-center h-full text-muted-foreground">

@@ -12,9 +12,11 @@ import asyncio
 import logging
 import json
 import base64
+import shutil
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -23,12 +25,12 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
 from browser_use import Agent, Browser, BrowserProfile
-from browser_use.agent.views import AgentOutput, AgentHistoryList
+from browser_use.agent.views import AgentHistory, AgentOutput, AgentHistoryList
 
 
 class EarlyScreenshotAgent(Agent):
@@ -57,6 +59,22 @@ INTERNAL_SECRET = os.getenv("BROWSER_USE_INTERNAL_SECRET", "dev-secret-change-in
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 POOLSIDE_API_KEY = os.getenv("POOLSIDE_API_KEY", "")
 
+VIDEO_ROOT = Path(os.getenv("BROWSER_VIDEO_DIR", "/tmp/browser-agent-videos")).expanduser().resolve()
+VIDEO_ENABLED = os.getenv("BROWSER_VIDEO_ENABLED", "true").lower() not in {"0", "false", "no"}
+VIDEO_TTL_SECONDS = int(os.getenv("BROWSER_VIDEO_TTL_SECONDS", "3600"))
+VIDEO_CLEANUP_INTERVAL_SECONDS = int(os.getenv("BROWSER_VIDEO_CLEANUP_INTERVAL_SECONDS", "900"))
+VIDEO_WIDTH = int(os.getenv("BROWSER_VIDEO_WIDTH", "1280"))
+VIDEO_HEIGHT = int(os.getenv("BROWSER_VIDEO_HEIGHT", "720"))
+VIDEO_FRAMERATE = int(os.getenv("BROWSER_VIDEO_FPS", "30"))
+
+if VIDEO_TTL_SECONDS <= 0 or VIDEO_CLEANUP_INTERVAL_SECONDS <= 0:
+    raise ValueError("BROWSER_VIDEO_TTL_SECONDS and BROWSER_VIDEO_CLEANUP_INTERVAL_SECONDS must be positive")
+if VIDEO_WIDTH <= 0 or VIDEO_HEIGHT <= 0 or VIDEO_FRAMERATE <= 0:
+    raise ValueError("BROWSER_VIDEO_WIDTH, BROWSER_VIDEO_HEIGHT, and BROWSER_VIDEO_FPS must be positive")
+
+if VIDEO_ENABLED:
+    VIDEO_ROOT.mkdir(parents=True, exist_ok=True)
+
 logger.info(f"INTERNAL_SECRET loaded: {INTERNAL_SECRET[:10]}..." if INTERNAL_SECRET else "INTERNAL_SECRET NOT SET")
 logger.info(f"POOLSIDE_API_KEY loaded: {POOLSIDE_API_KEY[:15]}..." if POOLSIDE_API_KEY else "POOLSIDE_API_KEY NOT SET")
 
@@ -67,6 +85,7 @@ class RunRequest(BaseModel):
     model_id: str = Field(default="openai/gpt-4o", description="LLM model ID")
     max_steps: int = Field(default=50, description="Maximum number of steps")
     poolside_api_key: Optional[str] = Field(default=None, description="Poolside API key")
+    opencode_api_key: Optional[str] = Field(default=None, description="OpenCode Zen API key")
     model_provider: Optional[str] = Field(default=None, description="Model provider override")
     use_vision: bool = Field(default=False, description="Send screenshots to model (set false for text-only models)")
     keep_alive: bool = Field(default=True, description="Keep browser alive for follow-up")
@@ -94,6 +113,8 @@ class AgentStateManager:
         self.chat_queues: Dict[str, asyncio.Queue] = {}
         self.dom_snapshots: Dict[str, str] = {}
         self.failure_bundles: Dict[str, Dict] = {}
+        self.video_paths: Dict[str, Path] = {}
+        self.video_dirs: Dict[str, Path] = {}
 
     def get_run(self, run_id: str) -> Optional[Dict]:
         return self.runs.get(run_id)
@@ -136,14 +157,114 @@ class AgentStateManager:
 state = AgentStateManager()
 
 
+def video_directory(run_id: str) -> Path:
+    """Return the isolated recording directory for a Python run."""
+    return VIDEO_ROOT / run_id
+
+
+def is_safe_run_id(run_id: str) -> bool:
+    return bool(run_id) and run_id.replace("-", "").isalnum() and "/" not in run_id and "\\" not in run_id
+
+
+async def finalize_video(run_id: str, browser: Optional[Browser]) -> Optional[Path]:
+    """Stop the recorder and retain only a non-empty, in-root MP4 file."""
+    if not VIDEO_ENABLED or run_id in state.video_paths:
+        return state.video_paths.get(run_id)
+
+    video_path: Optional[Path] = None
+    try:
+        watchdog = getattr(browser, "_recording_watchdog", None)
+        if watchdog is not None:
+            video_path = await watchdog.stop_recording()
+
+        run_dir = state.video_dirs.get(run_id, video_directory(run_id)).resolve()
+        if video_path is None:
+            candidates = sorted(run_dir.glob("*.mp4"), key=lambda path: path.stat().st_mtime, reverse=True)
+            video_path = candidates[0] if candidates else None
+
+        if video_path is None:
+            return None
+
+        resolved = Path(video_path).resolve()
+        if run_dir not in resolved.parents or resolved.suffix.lower() != ".mp4":
+            logger.warning("Ignoring video outside run directory for %s", run_id)
+            return None
+        if not resolved.is_file() or resolved.stat().st_size == 0:
+            return None
+
+        state.video_paths[run_id] = resolved
+        state.runs.setdefault(run_id, {})["video_path"] = str(resolved)
+        return resolved
+    except Exception as exc:
+        logger.warning("Video finalization failed for %s: %s", run_id, exc)
+        return None
+
+
+def cleanup_expired_videos(now: Optional[float] = None) -> int:
+    """Delete expired, inactive run directories without leaving the configured root."""
+    if not VIDEO_ENABLED or not VIDEO_ROOT.exists():
+        return 0
+
+    current_time = now if now is not None else datetime.now().timestamp()
+    cutoff = current_time - VIDEO_TTL_SECONDS
+    deleted = 0
+    for candidate in VIDEO_ROOT.iterdir():
+        run = state.runs.get(candidate.name)
+        if (
+            not candidate.is_dir()
+            or candidate.name in state.tasks
+            or run is not None and run.get("status") in {"pending", "running"}
+        ):
+            continue
+        try:
+            if candidate.resolve().parent != VIDEO_ROOT or candidate.stat().st_mtime >= cutoff:
+                continue
+            shutil.rmtree(candidate)
+            state.video_paths.pop(candidate.name, None)
+            state.video_dirs.pop(candidate.name, None)
+            deleted += 1
+        except OSError as exc:
+            logger.warning("Failed to clean video directory %s: %s", candidate, exc)
+    return deleted
+
+
+async def video_cleanup_loop() -> None:
+    while True:
+        try:
+            deleted = await asyncio.to_thread(cleanup_expired_videos)
+            if deleted:
+                logger.info("Cleaned up %s expired browser videos", deleted)
+            await asyncio.sleep(VIDEO_CLEANUP_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Video cleanup iteration failed")
+
+
 def verify_internal_secret(x_internal_secret: str = Header(default="", alias="X-Internal-Secret")) -> bool:
     if x_internal_secret != INTERNAL_SECRET:
         raise HTTPException(status_code=401, detail="Invalid internal secret")
     return True
 
 
-def get_llm(model_id: str, poolside_api_key: Optional[str] = None):
+def get_llm(
+    model_id: str,
+    poolside_api_key: Optional[str] = None,
+    opencode_api_key: Optional[str] = None,
+    model_provider: Optional[str] = None,
+):
     from browser_use.llm import ChatOpenAI
+
+    if model_provider == "opencode" or opencode_api_key:
+        return ChatOpenAI(
+            model=model_id.removeprefix("opencode/"),
+            base_url=os.getenv("OPENCODE_BASE_URL", "https://opencode.ai/zen/v1"),
+            api_key=opencode_api_key or os.getenv("OPENCODE_API_KEY", ""),
+            # OpenCode Zen currently rejects OpenAI's response_format=json_schema.
+            # Keep structured parsing locally while asking the model for JSON in the prompt.
+            add_schema_to_system_prompt=True,
+            dont_force_structured_output=True,
+        )
 
     api_key = poolside_api_key or POOLSIDE_API_KEY
     logger.info(f"get_llm: model_id={model_id}, poolside_api_key={'SET' if poolside_api_key else 'None'}, env_key={'SET' if POOLSIDE_API_KEY else 'EMPTY'}, resolved_key={'SET' if api_key else 'EMPTY'}")
@@ -227,6 +348,43 @@ def format_model_output(output) -> Dict[str, Any]:
     return result
 
 
+def format_action_trace(model_output: Any, browser_state: Any) -> List[Dict[str, Any]]:
+    """Serialize model actions with the DOM elements Browser-use resolved."""
+    if not model_output or not getattr(model_output, "action", None):
+        return []
+
+    dom_state = getattr(browser_state, "dom_state", None)
+    selector_map = getattr(dom_state, "selector_map", {}) if dom_state else {}
+    try:
+        interacted = AgentHistory.get_interacted_element(model_output, selector_map)
+    except Exception:
+        interacted = [None] * len(model_output.action)
+
+    trace: List[Dict[str, Any]] = []
+    for index, action in enumerate(model_output.action):
+        raw = action.model_dump(mode="json", exclude_none=True) if hasattr(action, "model_dump") else str(action)
+        action_name = action.__class__.__name__
+        if isinstance(raw, dict) and any(token in action_name.lower() for token in ("input", "type", "fill")):
+            raw = dict(raw)
+            for key in ("text", "value", "input"):
+                if key in raw:
+                    raw[key] = "{{TEST_VALUE}}"
+        element = interacted[index].to_dict() if index < len(interacted) and interacted[index] else None
+        if element and isinstance(element.get("attributes"), dict):
+            element = dict(element)
+            element["attributes"] = {
+                key: value
+                for key, value in element["attributes"].items()
+                if key not in {"value", "data-value", "data-token"}
+            }
+        trace.append({
+            "action": action_name,
+            "raw": raw,
+            "element": element,
+        })
+    return trace
+
+
 def extract_root_cause(error: Exception) -> str:
     """Extract a machine-readable root cause string from an exception."""
     if error is None:
@@ -278,26 +436,42 @@ def build_failure_bundle(
 
 async def run_agent_task(run_id: str, request: RunRequest):
     """Run the browser-use agent with step callbacks."""
+    nav_failed = False
     try:
         logger.info(f"Run request: url={request.url}, model_id={request.model_id}, use_vision={request.use_vision}")
         logger.info(f"Creating LLM for model_id={request.model_id}")
 
         task_text = f"{request.url}\n\nGoal: {request.goal}"
-        llm = get_llm(request.model_id, request.poolside_api_key)
+        llm = get_llm(
+            request.model_id,
+            request.poolside_api_key,
+            request.opencode_api_key,
+            request.model_provider,
+        )
         logger.info(f"LLM created: {type(llm).__name__}")
 
         # Create browser
         # Use Playwright's bundled Chromium if available (avoids conflicts with running Chrome)
-        playwright_candidate = None
-        try:
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as p:
-                playwright_candidate = p.chromium.executable_path
-        except Exception:
-            pass
+        playwright_candidate = os.getenv("BROWSER_USE_EXECUTABLE_PATH")
+        if not playwright_candidate:
+            try:
+                from playwright.async_api import async_playwright
+                async with async_playwright() as p:
+                    playwright_candidate = p.chromium.executable_path
+            except Exception as e:
+                logger.warning(f"Could not resolve Playwright Chromium path: {e}")
+        logger.info(f"Using browser executable: {playwright_candidate or 'browser-use default discovery'}")
+        run_video_dir = video_directory(run_id)
+        if VIDEO_ENABLED:
+            run_video_dir.mkdir(parents=True, exist_ok=True)
+            state.video_dirs[run_id] = run_video_dir
+
         browser_profile = BrowserProfile(
             headless=True,
             executable_path=playwright_candidate,
+            record_video_dir=run_video_dir if VIDEO_ENABLED else None,
+            record_video_size={"width": VIDEO_WIDTH, "height": VIDEO_HEIGHT} if VIDEO_ENABLED else None,
+            record_video_framerate=VIDEO_FRAMERATE,
         )
         browser = Browser(browser_profile=browser_profile)
         state.browsers[run_id] = browser
@@ -335,6 +509,7 @@ async def run_agent_task(run_id: str, request: RunRequest):
                 screenshot_b64 = None
 
             formatted_output = format_model_output(model_output)
+            action_trace = format_action_trace(model_output, browser_state)
 
             event = {
                 "event": "step",
@@ -343,6 +518,7 @@ async def run_agent_task(run_id: str, request: RunRequest):
                 "model_output": formatted_output,
                 "url": browser_state.url if browser_state else None,
                 "title": browser_state.title if browser_state else None,
+                "action_trace": action_trace,
             }
 
             # Capture DOM snapshot for failure bundle
@@ -368,11 +544,28 @@ async def run_agent_task(run_id: str, request: RunRequest):
             final_result = history.final_result() if hasattr(history, 'final_result') else None
             logger.info(f"Done callback called: success={success}, result={final_result}")
 
+            video_path = await finalize_video(run_id, browser)
+
+            all_steps = state.get_step_events(run_id)
+            aggregated_trace: List[Dict[str, Any]] = []
+            for step_event in all_steps:
+                step_trace = step_event.get("action_trace")
+                if step_trace and isinstance(step_trace, list) and len(step_trace) > 0:
+                    aggregated_trace.append({
+                        "stepNumber": step_event.get("step_number"),
+                        "url": step_event.get("url"),
+                        "title": step_event.get("title"),
+                        "actions": step_trace,
+                    })
+            logger.info(f"Done callback: aggregated {len(aggregated_trace)} action trace entries from {len(all_steps)} step events")
+
             event = {
                 "event": "done",
                 "success": success,
                 "message": final_result or "Task completed",
                 "duration": history.total_duration_seconds() if hasattr(history, 'total_duration_seconds') else 0,
+                "video_path": f"/run/{run_id}/video" if video_path else None,
+                "action_trace": aggregated_trace,
             }
 
             state.add_step_event(run_id, event)
@@ -408,7 +601,9 @@ async def run_agent_task(run_id: str, request: RunRequest):
 
         # Poolside is a thinking model — it does internal reasoning, so skip
         # agent-level thinking/flash to avoid redundant LLM calls per step.
-        is_poolside = bool(request.poolside_api_key or POOLSIDE_API_KEY)
+        is_poolside = request.model_provider == "poolside" or (
+            request.model_provider is None and bool(request.poolside_api_key or POOLSIDE_API_KEY)
+        )
 
         # Flash-mode prompt is minimal and omits completion guidance the model
         # needs. This string is appended regardless of which prompt template is
@@ -491,6 +686,8 @@ async def run_agent_task(run_id: str, request: RunRequest):
             state.runs[run_id]["status"] = "failed"
             state.runs[run_id]["error"] = str(e)
 
+            video_path = await finalize_video(run_id, browser)
+
             # Capture DOM snapshot for failure bundle
             try:
                 page = await browser.get_current_page()
@@ -516,32 +713,9 @@ async def run_agent_task(run_id: str, request: RunRequest):
                 "event": "error",
                 "message": str(e),
                 "failure_bundle": failure_bundle,
+                "video_path": f"/run/{run_id}/video" if video_path else None,
             }
             state.add_step_event(run_id, event)
-
-            # Detect navigation failures from browser state
-            if browser_state:
-                nav_error_keywords = [
-                    "err_name_not_resolved", "err_connection_refused",
-                    "err_connection_reset", "err_connection_closed",
-                    "err_connection_timed_out", "err_timed_out",
-                    "dns_probe_finished", "this site can't be reached",
-                    "navigation failed", "net::err_",
-                ]
-                url_lower = (browser_state.url or "").lower()
-                title_lower = (browser_state.title or "").lower()
-                has_browser_errors = (
-                    hasattr(browser_state, 'browser_errors')
-                    and isinstance(browser_state.browser_errors, list)
-                    and len(browser_state.browser_errors) > 0
-                )
-                if (
-                    has_browser_errors
-                    or "chrome-error" in url_lower
-                    or any(kw in url_lower for kw in nav_error_keywords)
-                    or any(kw in title_lower for kw in nav_error_keywords)
-                ):
-                    state.runs[run_id]["_nav_failed"] = True
 
             if run_id in state.chat_queues:
                 try:
@@ -553,6 +727,8 @@ async def run_agent_task(run_id: str, request: RunRequest):
         logger.error(f"Agent error: {e}", exc_info=True)
         state.runs[run_id]["status"] = "failed"
         state.runs[run_id]["error"] = str(e)
+
+        video_path = await finalize_video(run_id, browser if "browser" in locals() else None)
 
         # Build failure bundle (browser may not be available at this level)
         root_cause = extract_root_cause(e)
@@ -570,6 +746,7 @@ async def run_agent_task(run_id: str, request: RunRequest):
             "event": "error",
             "message": str(e),
             "failure_bundle": failure_bundle,
+            "video_path": f"/run/{run_id}/video" if video_path else None,
         }
         state.add_step_event(run_id, event)
 
@@ -580,6 +757,7 @@ async def run_agent_task(run_id: str, request: RunRequest):
                 pass
 
     finally:
+        await finalize_video(run_id, browser if "browser" in locals() else None)
         if run_id in state.tasks:
             del state.tasks[run_id]
 
@@ -587,8 +765,12 @@ async def run_agent_task(run_id: str, request: RunRequest):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Browser-use service starting up")
+    cleanup_task = asyncio.create_task(video_cleanup_loop()) if VIDEO_ENABLED else None
     yield
     logger.info("Browser-use service shutting down")
+    if cleanup_task:
+        cleanup_task.cancel()
+        await asyncio.gather(cleanup_task, return_exceptions=True)
     for run_id, task in state.tasks.items():
         task.cancel()
     state.tasks.clear()
@@ -661,7 +843,7 @@ async def stream_run(
         while True:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=30.0)
-                event_json = json.dumps(event)
+                event_json = json.dumps(_safe_json(event), default=str)
                 yield f"data: {event_json}\n\n"
 
                 if event.get("event") in ("done", "error"):
@@ -754,7 +936,7 @@ async def get_run_steps(
     if run_id not in state.runs:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    return {"steps": state.get_step_events(run_id)}
+    return {"steps": _safe_json(state.get_step_events(run_id))}
 
 
 def _safe_json(v, depth=0):
@@ -789,6 +971,31 @@ async def get_failure_bundle(
     return Response(
         content=json.dumps(safe, ensure_ascii=False),
         media_type="application/json",
+    )
+
+
+@app.get("/run/{run_id}/video")
+async def get_video(
+    run_id: str,
+    _: bool = Depends(verify_internal_secret),
+):
+    """Stream a finalized MP4 without exposing arbitrary filesystem paths."""
+    if not is_safe_run_id(run_id) or run_id not in state.runs:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    video_path = state.video_paths.get(run_id)
+    if video_path is None:
+        await finalize_video(run_id, state.browsers.get(run_id))
+        video_path = state.video_paths.get(run_id)
+
+    if video_path is None or not video_path.is_file():
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    return FileResponse(
+        path=video_path,
+        media_type="video/mp4",
+        filename="browser-agent.mp4",
+        headers={"Accept-Ranges": "bytes"},
     )
 
 

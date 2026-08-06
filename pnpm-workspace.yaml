@@ -1,9 +1,14 @@
-
 packages:
   - artifacts/*
   - lib/*
   - lib/integrations/*
   - scripts
+
+allowBuilds:
+  '@google/genai': true
+  bufferutil: true
+  esbuild: true
+  protobufjs: true
 
 autoInstallPeers: false
 

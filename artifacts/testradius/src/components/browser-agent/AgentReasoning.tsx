@@ -22,7 +22,7 @@ export function AgentReasoning({
 
   return (
     <Card className="rounded-xl border-border/50 bg-muted/30">
-      <CardContent className="p-3">
+      <CardContent className="min-w-0 break-words p-3">
         <button
           onClick={() => setExpanded(!expanded)}
           className="flex items-center gap-2 w-full text-left"
@@ -41,7 +41,7 @@ export function AgentReasoning({
         </button>
 
         {expanded && (
-          <div className="mt-3 space-y-2 text-xs">
+            <div className="mt-3 min-w-0 space-y-2 text-xs break-words">
             {thinking && (
               <div>
                 <span className="font-medium text-muted-foreground">Thinking:</span>

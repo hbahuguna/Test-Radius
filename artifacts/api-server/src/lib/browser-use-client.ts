@@ -69,6 +69,8 @@ interface PythonEvent {
   result?: unknown;
   thinking?: string;
   text?: string;
+  video_path?: string | null;
+  video_url?: string | null;
 }
 
 let currentRunId: string | null = null;
@@ -107,6 +109,7 @@ export async function proxyBrowserAutoStream(
         model_id: body.model || "openai/gpt-4o",
         max_steps: body.max_turns || 25,
         poolside_api_key: body.poolside_api_key,
+        opencode_api_key: body.opencode_api_key,
         model_provider: body.model_provider,
         use_vision: body.use_vision,
       }),
@@ -220,8 +223,8 @@ export async function proxyBrowserAutoStream(
                 }) + "\n");
               }
             }
-          } catch {
-            // Ignore malformed events
+          } catch (error) {
+            logger.warn({ error, target: body.url }, "Ignoring malformed browser-auto SSE event");
           }
         }
       }
@@ -387,6 +390,7 @@ export interface BrowserAgentRunRequest {
   use_vision?: boolean;
   keep_alive?: boolean;
   poolside_api_key?: string;
+  opencode_api_key?: string;
   model_provider?: string;
 }
 
@@ -406,6 +410,18 @@ export interface BrowserAgentStepEvent {
   } | null;
   url: string | null;
   title: string | null;
+  action_trace?: Array<{
+    action: string;
+    raw: unknown;
+    element: Record<string, unknown> | null;
+  }>;
+}
+
+export interface BrowserAgentActionTrace {
+  stepNumber: number;
+  url: string | null;
+  title: string | null;
+  actions: NonNullable<BrowserAgentStepEvent["action_trace"]>;
 }
 
 export interface BrowserAgentDoneEvent {
@@ -413,11 +429,16 @@ export interface BrowserAgentDoneEvent {
   success: boolean;
   message: string;
   duration?: number;
+  video_path?: string | null;
+  video_url?: string | null;
+  action_trace?: BrowserAgentActionTrace[];
 }
 
 export interface BrowserAgentErrorEvent {
   event: "error";
   message: string;
+  video_path?: string | null;
+  video_url?: string | null;
 }
 
 export type BrowserAgentEvent = BrowserAgentStepEvent | BrowserAgentDoneEvent | BrowserAgentErrorEvent;
@@ -428,6 +449,12 @@ export interface BrowserAgentRunResult {
   error: string | null;
   stepCount: number;
   duration: number | null;
+  videoPath: string | null;
+  actionTrace: BrowserAgentActionTrace[];
+}
+
+export interface BrowserAgentStreamOptions {
+  onTrace?: (trace: BrowserAgentActionTrace[]) => Promise<void> | void;
 }
 
 let currentAgentRunId: string | null = null;
@@ -435,6 +462,7 @@ let currentAgentRunId: string | null = null;
 export async function startBrowserAgentRun(
   body: BrowserAgentRunRequest,
   res?: Response,
+  options?: BrowserAgentStreamOptions,
 ): Promise<BrowserAgentRunResult | null> {
   logger.info({ target: body.url }, "Starting browser-agent run");
 
@@ -453,6 +481,7 @@ export async function startBrowserAgentRun(
         use_vision: body.use_vision ?? false,
         keep_alive: body.keep_alive ?? true,
         poolside_api_key: body.poolside_api_key,
+        opencode_api_key: body.opencode_api_key,
         model_provider: body.model_provider,
       }),
     });
@@ -467,7 +496,7 @@ export async function startBrowserAgentRun(
     logger.info({ run_id: runData.run_id }, "Browser-agent run started");
 
     // Await streaming - blocks until agent finishes
-    const streamResult = res ? await streamAgentEvents(runData.run_id, res) : undefined;
+    const streamResult = res ? await streamAgentEvents(runData.run_id, res, options) : undefined;
 
     return {
       run_id: runData.run_id,
@@ -475,6 +504,8 @@ export async function startBrowserAgentRun(
       error: streamResult?.error ?? null,
       stepCount: streamResult?.stepCount ?? 0,
       duration: streamResult?.duration ?? null,
+      videoPath: streamResult?.videoPath ?? null,
+      actionTrace: streamResult?.actionTrace ?? [],
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -493,11 +524,38 @@ export async function startBrowserAgentRun(
   }
 }
 
-async function streamAgentEvents(runId: string, res: Response): Promise<{
+function mergeActionTrace(
+  target: BrowserAgentActionTrace[],
+  additions: BrowserAgentActionTrace[],
+): BrowserAgentActionTrace[] {
+  const merged = [...target];
+  for (const addition of additions) {
+    const existing = merged.find((entry) => entry.stepNumber === addition.stepNumber);
+    if (!existing) {
+      merged.push(addition);
+      continue;
+    }
+    const seen = new Set(existing.actions.map((action) => JSON.stringify(action)));
+    for (const action of addition.actions) {
+      const key = JSON.stringify(action);
+      if (!seen.has(key)) {
+        existing.actions.push(action);
+        seen.add(key);
+      }
+    }
+    existing.url ??= addition.url;
+    existing.title ??= addition.title;
+  }
+  return merged.sort((a, b) => a.stepNumber - b.stepNumber);
+}
+
+async function streamAgentEvents(runId: string, res: Response, options?: BrowserAgentStreamOptions): Promise<{
   success: boolean | null;
   error: string | null;
   stepCount: number;
   duration: number | null;
+  videoPath: string | null;
+  actionTrace: BrowserAgentActionTrace[];
 }> {
   const streamResponse = await fetch(
     `${BROWSER_USE_URL}/run/${runId}/stream`,
@@ -509,7 +567,7 @@ async function streamAgentEvents(runId: string, res: Response): Promise<{
   );
 
   if (!streamResponse.ok) {
-    const result = { success: false, error: "Failed to connect to event stream", stepCount: 0, duration: null };
+    const result = { success: false, error: "Failed to connect to event stream", stepCount: 0, duration: null, videoPath: null, actionTrace: [] };
     res.write(
       `data: ${JSON.stringify({
         event: "error",
@@ -520,7 +578,7 @@ async function streamAgentEvents(runId: string, res: Response): Promise<{
   }
 
   const reader = streamResponse.body?.getReader();
-  if (!reader) return { success: null, error: null, stepCount: 0, duration: null };
+  if (!reader) return { success: null, error: null, stepCount: 0, duration: null, videoPath: null, actionTrace: [] };
 
   const decoder = new TextDecoder();
   let buffer = "";
@@ -528,6 +586,8 @@ async function streamAgentEvents(runId: string, res: Response): Promise<{
   let finalSuccess: boolean | null = null;
   let finalError: string | null = null;
   let finalDuration: number | null = null;
+  let finalVideoPath: string | null = null;
+  const actionTrace: BrowserAgentActionTrace[] = [];
 
   try {
     while (true) {
@@ -547,16 +607,43 @@ async function streamAgentEvents(runId: string, res: Response): Promise<{
 
             if (event.event === "step") {
               stepCount++;
+              const actions = event.action_trace?.length
+                ? event.action_trace
+                : event.model_output?.actions?.map((action) => ({
+                    action: action.name,
+                    raw: action.raw,
+                    element: null,
+                  })) || [];
+              if (actions.length) {
+                const stepTrace = [{
+                  stepNumber: event.step_number,
+                  url: event.url,
+                  title: event.title,
+                  actions,
+                }];
+                actionTrace.splice(0, actionTrace.length, ...mergeActionTrace(actionTrace, stepTrace));
+                await options?.onTrace?.(actionTrace);
+              }
             } else if (event.event === "done") {
               finalSuccess = event.success;
               finalDuration = event.duration ?? null;
-              return { success: finalSuccess, error: null, stepCount, duration: finalDuration };
+              finalVideoPath = event.video_url ?? event.video_path ?? null;
+              if ((event as BrowserAgentDoneEvent).action_trace?.length) {
+                actionTrace.splice(
+                  0,
+                  actionTrace.length,
+                  ...mergeActionTrace(actionTrace, (event as BrowserAgentDoneEvent).action_trace ?? []),
+                );
+                await options?.onTrace?.(actionTrace);
+              }
+              return { success: finalSuccess, error: null, stepCount, duration: finalDuration, videoPath: finalVideoPath, actionTrace };
             } else if (event.event === "error") {
               finalError = event.message;
-              return { success: false, error: finalError, stepCount, duration: null };
+              finalVideoPath = event.video_url ?? event.video_path ?? null;
+              return { success: false, error: finalError, stepCount, duration: null, videoPath: finalVideoPath, actionTrace };
             }
-          } catch {
-            // Ignore malformed events
+          } catch (error) {
+            logger.warn({ error, runId }, "Ignoring malformed browser-agent SSE event");
           }
         }
       }
@@ -565,7 +652,7 @@ async function streamAgentEvents(runId: string, res: Response): Promise<{
     reader.releaseLock();
   }
 
-  return { success: finalSuccess, error: finalError, stepCount, duration: finalDuration };
+  return { success: finalSuccess, error: finalError, stepCount, duration: finalDuration, videoPath: finalVideoPath, actionTrace };
 }
 
 /**
@@ -574,7 +661,7 @@ async function streamAgentEvents(runId: string, res: Response): Promise<{
  */
 export async function waitForBrowserAgentRun(runId: string): Promise<BrowserAgentRunResult> {
   logger.info({ run_id: runId }, "Waiting for browser-agent run (background)");
-  const result: BrowserAgentRunResult = { run_id: runId, success: null, error: null, stepCount: 0, duration: null };
+  const result: BrowserAgentRunResult = { run_id: runId, success: null, error: null, stepCount: 0, duration: null, videoPath: null, actionTrace: [] };
 
   try {
     const streamResponse = await fetch(
@@ -610,10 +697,34 @@ export async function waitForBrowserAgentRun(runId: string): Promise<BrowserAgen
             const event: BrowserAgentEvent = JSON.parse(line.slice(6));
             if (event.event === "step") {
               stepCount++;
+              const actions = event.action_trace?.length
+                ? event.action_trace
+                : event.model_output?.actions?.map((action) => ({
+                    action: action.name,
+                    raw: action.raw,
+                    element: null,
+                  })) || [];
+              if (actions.length) {
+                result.actionTrace = mergeActionTrace(result.actionTrace, [{
+                  stepNumber: event.step_number,
+                  url: event.url,
+                  title: event.title,
+                  actions,
+                }]);
+              }
             } else if (event.event === "done") {
               result.success = event.success;
               result.stepCount = stepCount;
               result.duration = (event as BrowserAgentDoneEvent).duration ?? null;
+              result.videoPath = (event as BrowserAgentDoneEvent).video_url
+                ?? (event as BrowserAgentDoneEvent).video_path
+                ?? null;
+              if ((event as BrowserAgentDoneEvent).action_trace?.length) {
+                result.actionTrace = mergeActionTrace(
+                  result.actionTrace,
+                  (event as BrowserAgentDoneEvent).action_trace ?? [],
+                );
+              }
               return result;
             } else if (event.event === "error") {
               result.success = false;
@@ -635,6 +746,23 @@ export async function waitForBrowserAgentRun(runId: string): Promise<BrowserAgen
   }
 
   return result;
+}
+
+export async function getBrowserAgentRunSteps(runId: string): Promise<Array<Record<string, unknown>>> {
+  try {
+    const response = await fetch(`${BROWSER_USE_URL}/run/${encodeURIComponent(runId)}/steps`, {
+      headers: { "X-Internal-Secret": INTERNAL_SECRET },
+    });
+    if (!response.ok) {
+      logger.warn({ runId, status: response.status }, "Browser-agent trace recovery request failed");
+      return [];
+    }
+    const data = await response.json() as { steps?: Array<Record<string, unknown>> };
+    return Array.isArray(data.steps) ? data.steps : [];
+  } catch (error) {
+    logger.warn({ error, runId }, "Browser-agent trace recovery request errored");
+    return [];
+  }
 }
 
 export async function sendBrowserAgentChat(
@@ -711,6 +839,41 @@ export async function getBrowserAgentScreenshot(
     return null;
   } catch {
     return null;
+  }
+}
+
+/** Proxy a finalized video without buffering the MP4 in the API process. */
+export async function proxyBrowserAgentVideo(runId: string, res: Response): Promise<number> {
+  try {
+    const response = await fetch(`${BROWSER_USE_URL}/run/${encodeURIComponent(runId)}/video`, {
+      headers: { "X-Internal-Secret": INTERNAL_SECRET },
+    });
+
+    if (!response.ok || !response.body) return response.status || 502;
+
+    res.status(response.status);
+    for (const header of ["content-type", "content-length", "content-range", "accept-ranges"]) {
+      const value = response.headers.get(header);
+      if (value) res.setHeader(header, value);
+    }
+
+    const reader = response.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!res.write(Buffer.from(value))) {
+          await new Promise<void>((resolve) => res.once("drain", resolve));
+        }
+      }
+    } finally {
+      reader.releaseLock();
+      if (!res.writableEnded) res.end();
+    }
+    return response.status;
+  } catch (error) {
+    logger.error({ error, runId }, "Failed to proxy browser-agent video");
+    return 502;
   }
 }
 

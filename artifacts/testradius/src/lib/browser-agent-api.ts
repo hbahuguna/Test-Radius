@@ -91,6 +91,28 @@ export interface AgentDoneEvent {
   duration?: number;
 }
 
+export interface GeneratedPlaywrightCode {
+  scriptId: string | null;
+  version: number;
+  runId: string;
+  language: "typescript";
+  framework: "playwright";
+  code: string;
+  warnings: string[];
+  traceDiagnostics?: {
+    source: "database" | "python_steps" | "none";
+    stepCount: number;
+    actionCount: number;
+    pythonRunId: string | null;
+  };
+}
+
+export interface SavedPlaywrightScript extends Omit<GeneratedPlaywrightCode, "runId"> {
+  id?: string;
+  sourceRunId?: string;
+  name?: string;
+}
+
 export interface AgentErrorEvent {
   event: "error";
   message: string;
@@ -294,5 +316,93 @@ export async function getBrowserAgentApiKeys(): Promise<UserApiKey[]> {
     return res.keys ?? [];
   } catch {
     return [];
+  }
+}
+
+export async function generatePlaywrightCode(runId: string): Promise<GeneratedPlaywrightCode> {
+  const response = await fetch(`${API_BASE}/runs/${encodeURIComponent(runId)}/generate-code`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getAuthToken()}`,
+    },
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.message || data.error || `Code generation failed (${response.status})`);
+  }
+  return data as GeneratedPlaywrightCode;
+}
+
+export async function savePlaywrightCode(scriptId: string, code: string): Promise<SavedPlaywrightScript> {
+  const response = await fetch(`${API_BASE}/scripts/${encodeURIComponent(scriptId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getAuthToken()}` },
+    body: JSON.stringify({ code }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || data.error || "Failed to save script");
+  return {
+    scriptId: data.id,
+    version: data.version,
+    language: data.language,
+    framework: data.framework,
+    code: data.code,
+    warnings: data.warnings ?? [],
+  };
+}
+
+export async function repairPlaywrightCode(scriptId: string, error?: string): Promise<SavedPlaywrightScript> {
+  const response = await fetch(`${API_BASE}/scripts/${encodeURIComponent(scriptId)}/repair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getAuthToken()}` },
+    body: JSON.stringify({ error }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || data.error || "Failed to repair script");
+  return {
+    scriptId: data.id,
+    version: data.version,
+    language: data.language,
+    framework: data.framework,
+    code: data.code,
+    warnings: data.warnings ?? [],
+  };
+}
+
+export async function runPlaywrightCode(scriptId: string, url: string): Promise<{ codeRunId: string }> {
+  const response = await fetch(`${API_BASE}/scripts/${encodeURIComponent(scriptId)}/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getAuthToken()}` },
+    body: JSON.stringify({ url }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || data.error || "Failed to run script");
+  return data;
+}
+
+export async function streamPlaywrightCodeRun(
+  codeRunId: string,
+  onEvent: (event: Record<string, unknown>) => void,
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/code-runs/${encodeURIComponent(codeRunId)}/events`, {
+    headers: { Authorization: `Bearer ${getAuthToken()}` },
+  });
+  if (!response.ok || !response.body) throw new Error("Failed to connect to code execution");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (line.startsWith("data: ")) {
+        try { onEvent(JSON.parse(line.slice(6)) as Record<string, unknown>); } catch { /* ignore malformed worker events */ }
+      }
+    }
   }
 }

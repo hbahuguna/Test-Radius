@@ -9,12 +9,23 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
+    "psutil>=7.0.0",
+    "pydantic-settings>=2.0.0",
+    "bubus>=1.5.0",
+    "cdp-use>=1.4.0",
+    "pyotp>=2.9.0",
+    "markdownify>=1.2.0",
+    "imageio>=2.36.0",
+    "imageio-ffmpeg>=0.5.1",
+    "numpy>=2.0.0",
+    "Pillow>=11.0.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
+    "pytest-httpserver>=1.1.0",
 ]
 
 [project.scripts]

@@ -90,10 +90,19 @@ function resolveModelOptions(
         },
       };
 
+    case "opencode":
+      return {
+        model: {
+          modelName: config.modelId,
+          apiKey: config.apiKey,
+          baseURL: process.env.OPENCODE_BASE_URL || "https://opencode.ai/zen/v1",
+        },
+      };
+
     default:
       throw new Error(
         `Unsupported Stagehand provider: ${config.provider}. ` +
-          "Supported: openai, anthropic, openrouter, poolside",
+        "Supported: openai, anthropic, openrouter, poolside, opencode",
       );
   }
 }
@@ -187,6 +196,27 @@ export async function collectMetrics(stagehand: Stagehand): Promise<StagehandMet
       extractInferenceTimeMs: 0,
       observeInferenceTimeMs: 0,
     };
+  }
+}
+
+export async function refineLocatorsWithStagehand(
+  url: string,
+  instruction: string,
+  config: StagehandConfig,
+): Promise<Array<{ selector?: string; description?: string; method?: string; arguments?: unknown }>> {
+  const stagehand = await createStagehand(config, { cacheDir: "/tmp/stagehand-locator-cache" });
+  try {
+    const page = stagehand.context.pages()[0];
+    await page.goto(url);
+    const observed = await stagehand.observe(instruction);
+    return (observed ?? []).map((item) => ({
+      selector: item.selector,
+      description: item.description,
+      method: item.method,
+      arguments: item.arguments,
+    }));
+  } finally {
+    await stagehand.close();
   }
 }
 
