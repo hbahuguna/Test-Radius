@@ -13,6 +13,7 @@ import { BrowserAuto } from "./pages/BrowserAuto";
 import { BrowserAgent } from "./pages/BrowserAgent";
 import { Settings } from "./pages/Settings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { StagehandAgent } from "./pages/StagehandAgent";
 
 function App() {
   return (
@@ -70,6 +71,11 @@ function App() {
       <Route path="/browser-agent">
         <ProtectedRoute>
           <BrowserAgent />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/stagehand-agent">
+        <ProtectedRoute>
+          <StagehandAgent />
         </ProtectedRoute>
       </Route>
       <Route path="/settings">

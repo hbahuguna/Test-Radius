@@ -1,4 +1,7 @@
 import { Stagehand } from "@browserbasehq/stagehand";
+import { chromium } from "playwright";
+import { existsSync, globSync } from "node:fs";
+import { homedir } from "node:os";
 import { z } from "zod";
 import { logger } from "./logger";
 
@@ -64,7 +67,7 @@ export interface StagehandMetrics {
  */
 function resolveModelOptions(
   config: StagehandConfig,
-): { model: string } | { model: { modelName: string; apiKey: string; baseURL: string } } {
+): { model: string } | { model: { modelName: string; apiKey: string; baseURL: string; provider?: "openai"; openaiEndpointFormat?: "responses" | "chat" } } {
   switch (config.provider) {
     case "openai":
       return { model: `openai/${config.modelId}` };
@@ -84,18 +87,25 @@ function resolveModelOptions(
     case "poolside":
       return {
         model: {
-          modelName: config.modelId,
+          // Poolside exposes an OpenAI-compatible chat API. Stagehand's AI SDK
+          // parser needs a supported provider prefix even with a custom base URL.
+          modelName: `openai/${config.modelId.startsWith("poolside/") ? config.modelId : `poolside/${config.modelId}`}`,
           apiKey: config.apiKey,
           baseURL: "https://inference.poolside.ai/v1",
+          provider: "openai",
+          openaiEndpointFormat: "chat",
         },
       };
 
     case "opencode":
       return {
         model: {
-          modelName: config.modelId,
+          // OpenCode Zen exposes an OpenAI-compatible API. Stagehand's AI SDK
+          // provider parser needs the model prefix to be an SDK provider.
+          modelName: `openai/${config.modelId.replace(/^opencode\//, "")}`,
           apiKey: config.apiKey,
           baseURL: process.env.OPENCODE_BASE_URL || "https://opencode.ai/zen/v1",
+          openaiEndpointFormat: "chat",
         },
       };
 
@@ -150,12 +160,22 @@ export async function createStagehand(
   options: CreateStagehandOptions = {},
 ): Promise<Stagehand> {
   const modelOptions = resolveModelOptions(config);
+  const executablePath = resolveBrowserExecutable();
+  const localBrowserLaunchOptions = existsSync(executablePath)
+    ? { executablePath, headless: true }
+    : { headless: true };
+
+  logger.info({ executablePath }, "Using shared Chromium executable for Stagehand");
 
   const stagehand = new Stagehand({
     env: "LOCAL",
     ...modelOptions,
+    localBrowserLaunchOptions,
     ...(options.cacheDir ? { cacheDir: options.cacheDir } : {}),
     domSettleTimeout: 5000,
+    verbose: 2,
+    experimental: true,
+    disableAPI: true,
   });
 
   logger.info(
@@ -166,6 +186,24 @@ export async function createStagehand(
   await stagehand.init();
 
   return stagehand;
+}
+
+function resolveBrowserExecutable(): string {
+  const configured = process.env.BROWSER_USE_EXECUTABLE_PATH;
+  if (configured && existsSync(configured)) return configured;
+
+  const playwrightPath = chromium.executablePath();
+  if (existsSync(playwrightPath)) return playwrightPath;
+
+  const cacheRoot = `${homedir()}/Library/Caches/ms-playwright`;
+  const candidates = globSync(`${cacheRoot}/chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium`)
+    .concat(globSync(`${cacheRoot}/chromium-*/chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`))
+    .filter((candidate) => existsSync(candidate))
+    .sort()
+    .reverse();
+  if (candidates[0]) return candidates[0];
+
+  return configured || playwrightPath;
 }
 
 // ============================================================
