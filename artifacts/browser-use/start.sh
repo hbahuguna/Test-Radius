@@ -24,10 +24,11 @@ if [ ! -f .env ]; then
 BROWSER_USE_INTERNAL_SECRET=${BROWSER_USE_INTERNAL_SECRET:-dev-secret-change-in-production}
 OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
 BROWSER_USE_API_KEY=${BROWSER_USE_API_KEY:-}
-PORT=${PORT:-8001}
+PORT=${BROWSER_USE_PORT:-8001}
 EOF
 fi
 
-# Start the server
-echo "Starting Browser-Use service on port ${PORT:-8001}..."
-exec python3 -m uvicorn server:app --host 0.0.0.0 --port ${PORT:-8001}
+# Start the server — always on BROWSER_USE_PORT (default 8001), never on the main $PORT
+LISTEN_PORT="${BROWSER_USE_PORT:-8001}"
+echo "Starting Browser-Use service on port ${LISTEN_PORT}..."
+exec python3 -m uvicorn server:app --host 0.0.0.0 --port "${LISTEN_PORT}"
