@@ -133,10 +133,10 @@ export interface AgentRunStatus {
 // ============================================================
 
 /**
- * Get the auth token from localStorage.
+ * Get the auth token from the current Supabase session.
  */
-function getAuthToken(): string {
-  return localStorage.getItem("auth_token") || "";
+async function getAuthToken(): Promise<string> {
+  return (await getSessionToken()) ?? "";
 }
 
 /**
@@ -154,7 +154,7 @@ export async function startBrowserAgentRun(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${getAuthToken()}`,
+      Authorization: `Bearer ${await getAuthToken()}`,
     },
     body: JSON.stringify(request),
     signal: callbacks.signal,
@@ -214,7 +214,7 @@ export async function sendBrowserAgentChat(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${getAuthToken()}`,
+        Authorization: `Bearer ${await getAuthToken()}`,
       },
       body: JSON.stringify({ message, run_id: runId }),
     });
@@ -234,7 +234,7 @@ export async function stopBrowserAgentRun(runId?: string): Promise<void> {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${getAuthToken()}`,
+        Authorization: `Bearer ${await getAuthToken()}`,
       },
       body: JSON.stringify({ run_id: runId }),
     });
@@ -256,7 +256,7 @@ export async function getBrowserAgentScreenshot(
 
     const response = await fetch(url, {
       headers: {
-        Authorization: `Bearer ${getAuthToken()}`,
+        Authorization: `Bearer ${await getAuthToken()}`,
       },
     });
 
@@ -274,7 +274,7 @@ export async function getBrowserAgentStatus(): Promise<AgentRunStatus> {
   try {
     const response = await fetch(`${API_BASE}/status`, {
       headers: {
-        Authorization: `Bearer ${getAuthToken()}`,
+        Authorization: `Bearer ${await getAuthToken()}`,
       },
     });
 
@@ -325,7 +325,7 @@ export async function generatePlaywrightCode(runId: string, mode: "deterministic
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${getAuthToken()}`,
+      Authorization: `Bearer ${await getAuthToken()}`,
     },
   });
 
@@ -357,7 +357,7 @@ export async function streamFinalizePlaywrightCode(
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/runs/${encodeURIComponent(runId)}/generate-code-llm`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${getAuthToken()}` },
+    headers: { Authorization: `Bearer ${await getAuthToken()}` },
     signal,
   });
   if (!response.ok || !response.body) throw new Error("Failed to start LLM finalization");
@@ -381,7 +381,7 @@ export async function streamFinalizePlaywrightCode(
 export async function savePlaywrightCode(scriptId: string, code: string): Promise<SavedPlaywrightScript> {
   const response = await fetch(`${API_BASE}/scripts/${encodeURIComponent(scriptId)}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getAuthToken()}` },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getAuthToken()}` },
     body: JSON.stringify({ code }),
   });
   const data = await response.json().catch(() => ({}));
@@ -399,7 +399,7 @@ export async function savePlaywrightCode(scriptId: string, code: string): Promis
 export async function repairPlaywrightCode(scriptId: string, error?: string): Promise<SavedPlaywrightScript> {
   const response = await fetch(`${API_BASE}/scripts/${encodeURIComponent(scriptId)}/repair`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getAuthToken()}` },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getAuthToken()}` },
     body: JSON.stringify({ error }),
   });
   const data = await response.json().catch(() => ({}));
@@ -417,7 +417,7 @@ export async function repairPlaywrightCode(scriptId: string, error?: string): Pr
 export async function runPlaywrightCode(scriptId: string, url: string): Promise<{ codeRunId: string }> {
   const response = await fetch(`${API_BASE}/scripts/${encodeURIComponent(scriptId)}/run`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getAuthToken()}` },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getAuthToken()}` },
     body: JSON.stringify({ url }),
   });
   const data = await response.json().catch(() => ({}));
@@ -430,7 +430,7 @@ export async function streamPlaywrightCodeRun(
   onEvent: (event: Record<string, unknown>) => void,
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/code-runs/${encodeURIComponent(codeRunId)}/events`, {
-    headers: { Authorization: `Bearer ${getAuthToken()}` },
+    headers: { Authorization: `Bearer ${await getAuthToken()}` },
   });
   if (!response.ok || !response.body) throw new Error("Failed to connect to code execution");
   const reader = response.body.getReader();
