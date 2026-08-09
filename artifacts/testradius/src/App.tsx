@@ -1,5 +1,5 @@
 import React from "react";
-import { Route, Switch } from "wouter";
+import { Redirect, Route, Switch } from "wouter";
 import { Home } from "./pages/Home";
 import { BlogIndex } from "./pages/BlogIndex";
 import { BlogPost } from "./pages/BlogPost";
@@ -10,10 +10,10 @@ import { Login } from "./pages/Login";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { Tester } from "./pages/Tester";
 import { BrowserAuto } from "./pages/BrowserAuto";
-import { BrowserAgent } from "./pages/BrowserAgent";
 import { Settings } from "./pages/Settings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { StagehandAgent } from "./pages/StagehandAgent";
+import { BrowserAgent } from "./pages/BrowserAgent";
 
 function App() {
   return (

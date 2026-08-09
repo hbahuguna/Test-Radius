@@ -40,9 +40,9 @@ export function Header({ scrollToForm }: HeaderProps) {
             </Button>
           </Link>
           {session ? (
-            <Link href="/tester">
+            <Link href="/browser-agent">
               <Button variant="ghost" className="hidden sm:inline-flex">
-                Tester
+                Agent
               </Button>
             </Link>
           ) : (
@@ -55,9 +55,9 @@ export function Header({ scrollToForm }: HeaderProps) {
             </Button>
           )}
           {session ? (
-            <Link href="/tester">
+            <Link href="/browser-agent">
               <Button className="font-medium shadow-sm hover:shadow-md transition-all">
-                Go to Tester
+                Go to Agent
               </Button>
             </Link>
           ) : location === "/login" ? (

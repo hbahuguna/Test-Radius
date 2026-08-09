@@ -67,7 +67,17 @@ export interface StagehandMetrics {
  */
 function resolveModelOptions(
   config: StagehandConfig,
-): { model: string } | { model: { modelName: string; apiKey: string; baseURL: string; provider?: "openai"; openaiEndpointFormat?: "responses" | "chat" } } {
+): { model: string } | {
+    model: {
+      modelName: string;
+      apiKey?: string;
+      baseURL?: string;
+      provider?: "openai";
+      openaiEndpointFormat?: "responses" | "chat";
+      reasoningEffort?: string;
+      headers?: Record<string, string>;
+    };
+  } {
   switch (config.provider) {
     case "openai":
       return { model: `openai/${config.modelId}` };
@@ -75,6 +85,15 @@ function resolveModelOptions(
     case "anthropic":
       return { model: `anthropic/${config.modelId}` };
 
+    case "google":
+      // Gemini models are invoked via the AI SDK Google provider, which needs
+      // the API key in clientOptions (it is not picked up from the model id).
+      return {
+        model: {
+          modelName: `google/${config.modelId}`,
+          apiKey: config.apiKey,
+        },
+      };
     case "openrouter":
       return {
         model: {
@@ -94,6 +113,11 @@ function resolveModelOptions(
           baseURL: "https://inference.poolside.ai/v1",
           provider: "openai",
           openaiEndpointFormat: "chat",
+          // Keep reasoning off so thinking-capable models accept Stagehand's
+          // tool_choice. Some OpenAI-compatible gateways reject tool_choice while
+          // in thinking mode, which surfaces as repeated act/click tool failures
+          // and a broken "done" finalization call.
+          reasoningEffort: "none",
         },
       };
 
@@ -106,6 +130,7 @@ function resolveModelOptions(
           apiKey: config.apiKey,
           baseURL: process.env.OPENCODE_BASE_URL || "https://opencode.ai/zen/v1",
           openaiEndpointFormat: "chat",
+          reasoningEffort: "none",
         },
       };
 
@@ -407,6 +432,48 @@ async function evaluateSingleAssertion(
   }
 
   return { index, pass: false, reason: "Could not evaluate assertion" };
+}
+
+/**
+ * Detect whether a Stagehand run failed because the driving model provider is
+ * running the model in "thinking mode", which OpenAI-compatible gateways often
+ * refuse to combine with Stagehand's forced tool_choice / structured-output
+ * calls (act, extract, done). Returns a human-readable warning + fix, or null.
+ *
+ * opencode Zen reasoning models (big-pickle, deepseek-v4-flash-free, ...) are
+ * the usual offenders: the agent "finishes" by reading the page (ariaTree /
+ * screenshot) without ever clicking, because every `act` throws a 400.
+ */
+export function detectProviderCompatibilityIssue(
+  provider: string,
+  modelId: string,
+  resultMessage: unknown,
+  actions: Array<{ type?: string; action?: string; success?: boolean }>,
+): string | null {
+  const normProvider = String(provider ?? "").toLowerCase();
+  if (!["opencode", "openrouter", "poolside"].includes(normProvider)) {
+    return null;
+  }
+
+  const sig = /(thinking mode|reasoning_content|tool_choice\b.*(support|allow|not)|reasoning.*tool_choice|upstream provider error|invalid_request_error|status 400|not supported)/i.test(
+    String(resultMessage ?? ""),
+  );
+
+  // Count real interactions (clicks/types/keys). ariaTree/screenshot/extract
+  // are read-only and don't count as "doing the task".
+  const realInteractions = (actions ?? []).filter((a) => {
+    const type = String(a?.type ?? a?.action ?? "").toLowerCase();
+    if (["ariatree", "screenshot", "extract"].includes(type)) return false;
+    return a?.success !== false;
+  }).length;
+
+  if (!sig && realInteractions > 0) return null;
+
+  return `Provider "${normProvider}/${modelId}" appears to be running in thinking mode, which ${
+    realInteractions === 0
+      ? "let the run finish without performing any real click/type action"
+      : "caused some interaction errors"
+  }. OpenCode Zen reasoning models currently reject Stagehand's forced tool calls. To fix, pick a non-reasoning model or a provider that supports forced tool use (e.g. OpenAI gpt-4o), or disable thinking mode on this model.`;
 }
 
 async function emptyMetrics(): Promise<StagehandMetrics> {

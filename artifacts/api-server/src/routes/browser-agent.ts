@@ -20,6 +20,8 @@ import {
 import { decryptKey } from "../lib/crypto";
 import { logger } from "../lib/logger";
 import { generatePlaywrightScript, type GeneratedTraceStep } from "../lib/playwright-script";
+import { browserGenerateStagehandScript } from "../lib/browser-trace-adapter";
+import { finalizePlaywrightScript, finalizePlaywrightScriptStream } from "../lib/script-finalize";
 import { getCodeRun, isWorkerAvailable, startCodeRun, stopCodeRun } from "../lib/code-runner";
 import { repairPlaywrightScript } from "../lib/script-repair";
 import { refineLocatorsWithStagehand } from "../lib/stagehand-client";
@@ -394,9 +396,38 @@ router.post("/runs/:id/generate-code", async (req: Request, res: Response) => {
   };
   logger.info({ runId: run.id, ...traceDiagnostics }, "Preparing Playwright code from browser trace");
 
-  const generated = generatePlaywrightScript(run.url, run.goal, actionTrace);
+  const mode = typeof req.query?.mode === "string" ? req.query.mode : "deterministic";
+  let generated = browserGenerateStagehandScript(run.url, run.goal, actionTrace);
+  let explanation = "";
   if (actionTrace.length === 0) {
     generated.warnings.unshift("No browser action trace was available. This is a starter scaffold based on the run URL and goal. Check that the API server was restarted after the latest build and that the browser-use service stayed running for the completed run.");
+  }
+  if (mode === "llm") {
+    try {
+      const provider = run.modelUsed || "opencode";
+      const [keyRow] = await db.select().from(userApiKeysTable).where(and(eq(userApiKeysTable.userId, user.id), eq(userApiKeysTable.provider, provider))).limit(1);
+      const apiKey = keyRow
+        ? decryptKey(JSON.parse(keyRow.encryptedKey))
+        : provider === "opencode"
+          ? process.env.OPENCODE_API_KEY || ""
+          : "";
+      const lastUrl = [...actionTrace].reverse().find((step) => step.url)?.url ?? undefined;
+      const finalized = await finalizePlaywrightScript({
+        url: run.url,
+        goal: run.goal,
+        trace: actionTrace,
+        draftCode: generated.code,
+        finalUrl: lastUrl,
+        provider,
+        apiKey,
+      });
+      explanation = finalized.explanation;
+      generated = { code: finalized.code, warnings: [...finalized.warnings, ...generated.warnings] };
+      generated.warnings.unshift("Refined with a language model.");
+    } catch (finalizeError) {
+      logger.warn({ finalizeError, runId: run.id }, "Model-assisted finalization failed; using deterministic draft");
+      generated.warnings.unshift("Model-assisted finalization was unavailable; used the deterministic draft.");
+    }
   }
   let scriptId: string | null = null;
   let scriptVersion = 0;
@@ -424,6 +455,7 @@ router.post("/runs/:id/generate-code", async (req: Request, res: Response) => {
     ...metadata,
     generatedPlaywrightCode: generated.code,
     generatedPlaywrightWarnings: generated.warnings,
+    generatedPlaywrightExplanation: explanation || undefined,
     generatedAt: new Date().toISOString(),
   };
 
@@ -438,10 +470,127 @@ router.post("/runs/:id/generate-code", async (req: Request, res: Response) => {
     runId: run.id,
     language: "typescript",
     framework: "playwright",
+    mode,
     code: generated.code,
     warnings: generated.warnings,
+    explanation: explanation || undefined,
     traceDiagnostics,
   });
+});
+
+router.post("/runs/:id/generate-code-llm", async (req: Request, res: Response) => {
+  const user = (await getOrCreateUser(req.user!))!;
+  const [run] = await db
+    .select()
+    .from(agenticRunsTable)
+    .where(and(eq(agenticRunsTable.id, req.params.id as string), eq(agenticRunsTable.userId, user.id)))
+    .limit(1);
+  if (!run) {
+    res.status(404).json({ error: "run_not_found" });
+    return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  const send = (event: unknown): void => {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+
+  const metadata = run.metadata && typeof run.metadata === "object" ? run.metadata as Record<string, unknown> : {};
+  const actionTrace = Array.isArray(metadata.actionTrace)
+    ? metadata.actionTrace as GeneratedTraceStep[]
+    : [];
+  const draft = browserGenerateStagehandScript(run.url, run.goal, actionTrace);
+
+  try {
+    const provider = run.modelUsed || "opencode";
+    const [keyRow] = await db.select().from(userApiKeysTable).where(and(eq(userApiKeysTable.userId, user.id), eq(userApiKeysTable.provider, provider))).limit(1);
+    const apiKey = keyRow
+      ? decryptKey(JSON.parse(keyRow.encryptedKey))
+      : provider === "opencode"
+        ? process.env.OPENCODE_API_KEY || ""
+        : "";
+    const lastUrl = [...actionTrace].reverse().find((step) => step.url)?.url ?? undefined;
+
+    let code = draft.code;
+    let warnings = [...actionTrace.length === 0 ? ["No browser action trace was available. This is a starter scaffold based on the run URL and goal."] : [], ...draft.warnings];
+    let explanation = "";
+
+    for await (const event of finalizePlaywrightScriptStream({
+      url: run.url,
+      goal: run.goal,
+      trace: actionTrace,
+      draftCode: draft.code,
+      finalUrl: lastUrl,
+      provider,
+      apiKey,
+    })) {
+      if (event.type === "draft") {
+        send({ type: "draft", message: "Generated deterministic draft from the recorded action trace." });
+      } else if (event.type === "draft.ready") {
+        send({ type: "draft", message: `Draft ready (${event.chars} chars). Asking model to polish…` });
+      } else if (event.type === "calling") {
+        send({ type: "calling", provider: event.provider, model: event.model, message: `Calling ${event.provider}/${event.model} to finalize the Playwright script…` });
+      } else if (event.type === "token") {
+        send({ type: "token", delta: event.delta });
+      } else if (event.type === "complete") {
+        send({ type: "polished", message: "Model finished. Polished result accepted." });
+        code = event.result.code;
+        explanation = event.result.explanation;
+        warnings = [...event.result.warnings, ...draft.warnings];
+        warnings.unshift("Refined with a language model.");
+      } else if (event.type === "error") {
+        send({ type: "error", message: `Model call failed (${event.message}); using the deterministic draft.` });
+        warnings.unshift("Model-assisted finalization failed; used the deterministic draft.");
+      }
+    }
+
+    let scriptId: string | null = null;
+    let scriptVersion = 0;
+    try {
+      const [script] = await db
+        .insert(generatedTestScriptsTable)
+        .values({
+          userId: user.id,
+          sourceRunId: run.id,
+          version: 1,
+          code,
+          description: run.goal,
+          warnings,
+        })
+        .returning();
+      scriptId = script?.id ?? null;
+      scriptVersion = script?.version ?? 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("generated_test_scripts")) throw error;
+      warnings.unshift("Script persistence is unavailable until the generated_test_scripts database migration is applied.");
+    }
+
+    await db
+      .update(agenticRunsTable)
+      .set({
+        metadata: {
+          ...metadata,
+          generatedPlaywrightCode: code,
+          generatedPlaywrightWarnings: warnings,
+          generatedPlaywrightExplanation: explanation || undefined,
+          generatedAt: new Date().toISOString(),
+        },
+      })
+      .where(eq(agenticRunsTable.id, run.id));
+
+    send({ type: "complete", code, warnings, explanation: explanation || undefined, scriptId, version: scriptVersion, mode: "llm" });
+  } catch (error) {
+    logger.error({ error, runId: run.id }, "Failed to finalize code via streaming route");
+    send({ type: "error", message: error instanceof Error ? error.message : String(error) });
+  } finally {
+    res.end();
+  }
 });
 
 router.get("/scripts/:id", async (req: Request, res: Response) => {
@@ -506,7 +655,7 @@ router.post("/scripts/:id/repair", async (req: Request, res: Response) => {
     res.status(422).json({ error: "trace_unavailable" });
     return;
   }
-  let generated = generatePlaywrightScript(run.url, run.goal, trace);
+  let generated = browserGenerateStagehandScript(run.url, run.goal, trace);
   let explanation = "Regenerated from the source trace.";
   const error = typeof req.body?.error === "string" ? req.body.error : "";
   try {

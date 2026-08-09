@@ -122,7 +122,6 @@ export function Tester() {
     setStatus("running");
     setSuccess(null);
     setSteps([]);
-    setThoughts([]);
     setGeneratedCode(null);
     setScreenshot(null);
     setRunError(null);

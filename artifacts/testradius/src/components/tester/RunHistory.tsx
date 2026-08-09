@@ -15,7 +15,7 @@ export function RunHistory({ runs, loading }: RunHistoryProps) {
   if (loading) {
     return <p className="text-sm text-muted-foreground">Loading history…</p>;
   }
-  if (!(runs?.length ?? 0) > 0) {
+  if (!(runs?.length)) {
     return <p className="text-sm text-muted-foreground">No runs yet. Run your first test above.</p>;
   }
 

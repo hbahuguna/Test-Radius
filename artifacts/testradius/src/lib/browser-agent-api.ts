@@ -99,6 +99,7 @@ export interface GeneratedPlaywrightCode {
   framework: "playwright";
   code: string;
   warnings: string[];
+  explanation?: string;
   traceDiagnostics?: {
     source: "database" | "python_steps" | "none";
     stepCount: number;
@@ -319,8 +320,8 @@ export async function getBrowserAgentApiKeys(): Promise<UserApiKey[]> {
   }
 }
 
-export async function generatePlaywrightCode(runId: string): Promise<GeneratedPlaywrightCode> {
-  const response = await fetch(`${API_BASE}/runs/${encodeURIComponent(runId)}/generate-code`, {
+export async function generatePlaywrightCode(runId: string, mode: "deterministic" | "llm" = "deterministic"): Promise<GeneratedPlaywrightCode> {
+  const response = await fetch(`${API_BASE}/runs/${encodeURIComponent(runId)}/generate-code?mode=${mode}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -333,6 +334,48 @@ export async function generatePlaywrightCode(runId: string): Promise<GeneratedPl
     throw new Error(data.message || data.error || `Code generation failed (${response.status})`);
   }
   return data as GeneratedPlaywrightCode;
+}
+
+export interface FinalizeActivityEvent {
+  type: "draft" | "calling" | "token" | "polished" | "error" | "complete";
+  message?: string;
+  delta?: string;
+  provider?: string;
+  model?: string;
+  code?: string;
+  warnings?: string[];
+  explanation?: string;
+  scriptId?: string | null;
+  version?: number;
+  mode?: string;
+}
+
+export async function streamFinalizePlaywrightCode(
+  runId: string,
+  onEvent: (event: FinalizeActivityEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/runs/${encodeURIComponent(runId)}/generate-code-llm`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${getAuthToken()}` },
+    signal,
+  });
+  if (!response.ok || !response.body) throw new Error("Failed to start LLM finalization");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (line.startsWith("data: ")) {
+        try { onEvent(JSON.parse(line.slice(6)) as FinalizeActivityEvent); } catch { /* ignore malformed */ }
+      }
+    }
+  }
 }
 
 export async function savePlaywrightCode(scriptId: string, code: string): Promise<SavedPlaywrightScript> {

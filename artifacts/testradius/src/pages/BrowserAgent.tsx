@@ -34,6 +34,8 @@ import {
   type UserApiKey,
   type BrowserAgentRunHistoryItem,
   type GeneratedPlaywrightCode,
+  streamFinalizePlaywrightCode,
+  type FinalizeActivityEvent,
 } from "@/lib/browser-agent-api";
 import { type Assertion } from "@/lib/agentic-api";
 import { toast } from "sonner";
@@ -73,12 +75,17 @@ export function BrowserAgent() {
   const [codeWarnings, setCodeWarnings] = useState<string[]>([]);
   const [traceDiagnostics, setTraceDiagnostics] = useState<GeneratedPlaywrightCode["traceDiagnostics"]>(undefined);
   const [codeLoading, setCodeLoading] = useState(false);
+  const [codeLlLoading, setCodeLlLoading] = useState(false);
+  const [finalizeActivity, setFinalizeActivity] = useState<string[]>([]);
+  const [finalizeStream, setFinalizeStream] = useState("");
+  const [finalizeError, setFinalizeError] = useState<string | null>(null);
   const [scriptId, setScriptId] = useState<string | null>(null);
   const [scriptVersion, setScriptVersion] = useState<number | null>(null);
   const [codeRunEvents, setCodeRunEvents] = useState<Record<string, unknown>[]>([]);
   const [codeRunLoading, setCodeRunLoading] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
+  const finalizeAbortRef = useRef<AbortController | null>(null);
   const screenshotTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasReceivedFirstStep = useRef(false);
   const currentRunIdRef = useRef<string | null>(null);
@@ -342,6 +349,45 @@ export function BrowserAgent() {
     }
   }, [completedRunId, codeLoading]);
 
+  const handleGenerateCodeLLM = useCallback(async () => {
+    if (!completedRunId || codeLoading || codeLlLoading) return;
+    setCodeLlLoading(true);
+    setFinalizeActivity([]);
+    setFinalizeStream("");
+    setFinalizeError(null);
+    const controller = new AbortController();
+    finalizeAbortRef.current = controller;
+    try {
+      await streamFinalizePlaywrightCode(completedRunId, (event) => {
+        if (event.type === "token") {
+          setFinalizeStream((prev) => prev + (event.delta ?? ""));
+          return;
+        }
+        const line =
+          event.type === "complete"
+            ? "Done. Result ready below."
+            : event.message ?? `[${event.type}]`;
+        setFinalizeActivity((prev) => [...prev, line]);
+        if (event.type === "error" && event.message) setFinalizeError(event.message);
+        if (event.type === "complete") {
+          setGeneratedCode(event.code ?? null);
+          setCodeWarnings(event.warnings ?? []);
+          setScriptId(event.scriptId ?? null);
+          setScriptVersion(event.version ?? 0);
+          toast.success(event.explanation || "Playwright code generated and polished");
+        }
+      }, controller.signal);
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
+        setFinalizeError(error instanceof Error ? error.message : "LLM finalization failed");
+        setFinalizeActivity((prev) => [...prev, "LLM finalization failed to connect."]);
+      }
+    } finally {
+      setCodeLlLoading(false);
+      finalizeAbortRef.current = null;
+    }
+  }, [completedRunId, codeLoading, codeLlLoading]);
+
   const handleSaveCode = useCallback(async () => {
     if (!scriptId || generatedCode === null) return;
     try {
@@ -428,9 +474,6 @@ export function BrowserAgent() {
               </p>
             </div>
             <div className="flex items-center gap-3">
-              <Link href="/browser-auto">
-                <Button variant="ghost" size="sm">Browser Auto</Button>
-              </Link>
               <Link href="/settings">
                 <Button variant="ghost" size="sm">Settings</Button>
               </Link>
@@ -524,9 +567,44 @@ export function BrowserAgent() {
                           {events.filter((e) => e.event === "step").length} steps taken
                         </p>
                         {completedRunId && (
-                          <Button size="sm" onClick={handleGenerateCode} disabled={codeLoading}>
-                            {codeLoading ? "Generating…" : "Generate Playwright Code"}
-                          </Button>
+                          <div className="flex flex-col gap-2">
+                            <Button size="sm" onClick={handleGenerateCode} disabled={codeLoading}>
+                              {codeLoading ? "Generating…" : "Generate Playwright Code"}
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={handleGenerateCodeLLM} disabled={codeLoading || codeLlLoading}>
+                              {codeLlLoading ? "Polishing…" : "Generate + LLM Polish"}
+                            </Button>
+                            {(codeLlLoading || finalizeActivity.length > 0 || finalizeStream || finalizeError) && (
+                              <div className="rounded-lg border border-border bg-muted/40 p-2 text-xs">
+                                <div className="mb-1 flex items-center justify-between">
+                                  <p className="font-medium text-muted-foreground">LLM polish activity</p>
+                                  {codeLlLoading && (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-5 px-2 text-[11px]"
+                                      onClick={() => finalizeAbortRef.current?.abort()}
+                                    >
+                                      Stop
+                                    </Button>
+                                  )}
+                                </div>
+                                <div className="space-y-1 text-muted-foreground">
+                                  {finalizeActivity.map((line, index) => (
+                                    <p key={index} className={line.includes("failed") || line.startsWith("Error") ? "text-destructive" : undefined}>{line}</p>
+                                  ))}
+                                  {finalizeStream && (
+                                    <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words border-t border-border pt-1 font-mono text-[10px] leading-snug text-muted-foreground/80">
+                                      {finalizeStream}
+                                    </pre>
+                                  )}
+                                  {finalizeError && !codeLlLoading && (
+                                    <p className="text-destructive">Model call failed: {finalizeError}. Using the deterministic draft.</p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
                     )}
