@@ -86,6 +86,23 @@ router = "path"
 PORT = "19143"
 BASE_PATH = "/"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "artifacts/browser-use: Browser Use Service"
+
+[[workflows.workflow]]
+name = "artifacts/browser-use: Browser Use Service"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd artifacts/browser-use && bash start.sh"
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
