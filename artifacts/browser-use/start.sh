@@ -11,7 +11,7 @@ export PATH="$PYTHON_BIN:$PATH"
 
 # Install dependencies into the Replit Python env
 echo "Installing dependencies..."
-uv pip install --quiet fastapi uvicorn pydantic python-dotenv langchain-openai langchain-anthropic 'playwright==1.55.0' psutil pydantic-settings pyotp pillow zstandard aiohttp anyio httpx google-genai anthropic groq ollama google-api-python-client google-auth google-auth-oauthlib mcp pypdf reportlab cloudpickle markdownify python-docx bubus cdp-use rich
+uv pip install --quiet fastapi uvicorn pydantic python-dotenv langchain-openai langchain-anthropic 'playwright==1.55.0' psutil pydantic-settings pyotp pillow zstandard aiohttp anyio httpx google-genai anthropic groq ollama google-api-python-client google-auth google-auth-oauthlib mcp pypdf reportlab cloudpickle markdownify python-docx bubus cdp-use rich posthog
 
 # Install playwright browsers
 echo "Installing Playwright browsers..."
