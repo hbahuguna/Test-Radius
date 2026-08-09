@@ -1,7 +1,10 @@
+import { getSessionToken } from "@/lib/auth";
+
 const API_BASE = "/api/stagehand-agent";
 
-function authHeaders(): HeadersInit {
-  return { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("auth_token") || ""}` };
+async function authHeaders(): Promise<HeadersInit> {
+  const token = (await getSessionToken()) ?? "";
+  return { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
 }
 
 export interface StagehandAction {
@@ -50,7 +53,7 @@ export async function runStagehandAgent(request: {
 }, onEvent?: (event: StagehandLiveEvent) => void): Promise<StagehandRunResult> {
   const response = await fetch(`${API_BASE}/run`, {
     method: "POST",
-    headers: authHeaders(),
+    headers: await authHeaders(),
     body: JSON.stringify(request),
   });
   if (!response.ok) {
@@ -84,7 +87,7 @@ export async function runStagehandAgent(request: {
 export async function generateStagehandCode(runId: string): Promise<StagehandRunResult> {
   const response = await fetch(`${API_BASE}/runs/${encodeURIComponent(runId)}/generate-code`, {
     method: "POST",
-    headers: authHeaders(),
+    headers: await authHeaders(),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.message || data.error || `Code generation failed (${response.status})`);
@@ -94,7 +97,7 @@ export async function generateStagehandCode(runId: string): Promise<StagehandRun
 export async function runStagehandScript(scriptId: string, url: string): Promise<{ codeRunId: string }> {
   const response = await fetch(`${API_BASE}/scripts/${encodeURIComponent(scriptId)}/run`, {
     method: "POST",
-    headers: authHeaders(),
+    headers: await authHeaders(),
     body: JSON.stringify({ url }),
   });
   const data = await response.json().catch(() => ({}));
@@ -114,7 +117,7 @@ export interface CodeRunLiveEvent {
 export async function streamCodeRunEvents(codeRunId: string, onEvent: (event: CodeRunLiveEvent) => void, signal?: AbortSignal): Promise<void> {
   const response = await fetch(`${API_BASE}/code-runs/${encodeURIComponent(codeRunId)}/events`, {
     method: "GET",
-    headers: authHeaders(),
+    headers: await authHeaders(),
     signal,
   });
   if (!response.ok || !response.body) {
@@ -140,7 +143,7 @@ export async function streamCodeRunEvents(codeRunId: string, onEvent: (event: Co
 export async function stopStagehandCodeRun(codeRunId: string): Promise<void> {
   await fetch(`${API_BASE}/code-runs/${encodeURIComponent(codeRunId)}/stop`, {
     method: "POST",
-    headers: authHeaders(),
+    headers: await authHeaders(),
   });
 }
 
@@ -153,7 +156,7 @@ export interface StagehandRepairResult {
 export async function repairStagehandScript(scriptId: string, errorText: string): Promise<StagehandRepairResult> {
   const response = await fetch(`${API_BASE}/scripts/${encodeURIComponent(scriptId)}/repair`, {
     method: "POST",
-    headers: authHeaders(),
+    headers: await authHeaders(),
     body: JSON.stringify({ error: errorText }),
   });
   const data = await response.json().catch(() => ({}));
@@ -164,7 +167,7 @@ export async function repairStagehandScript(scriptId: string, errorText: string)
 export async function refineStagehandLocators(scriptId: string, instruction: string): Promise<{ locators: Array<{ selector?: string; description?: string; method?: string }> }> {
   const response = await fetch(`${API_BASE}/scripts/${encodeURIComponent(scriptId)}/refine-locators`, {
     method: "POST",
-    headers: authHeaders(),
+    headers: await authHeaders(),
     body: JSON.stringify({ instruction }),
   });
   const data = await response.json().catch(() => ({}));
