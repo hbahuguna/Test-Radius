@@ -56,8 +56,10 @@ export async function ensureBrowserUseRunning(): Promise<void> {
     // not running yet — fall through to spawn
   }
 
-  // Resolve the workspace root (two levels up from artifacts/api-server/src/lib/)
-  const workspaceRoot = path.resolve(__dirname, "../../../../");
+  // Resolve the workspace root.
+  // Production dist is at: <workspace>/artifacts/api-server/dist/index.mjs
+  // __dirname = <workspace>/artifacts/api-server/dist  →  3 levels up = workspace root
+  const workspaceRoot = path.resolve(__dirname, "../../../");
   const startScript = path.join(workspaceRoot, "artifacts/browser-use/start.sh");
 
   logger.info({ startScript }, "browser-use: spawning Python service...");
@@ -75,6 +77,10 @@ export async function ensureBrowserUseRunning(): Promise<void> {
     detached: false,
   });
 
+  child.on("error", (err) => {
+    // Must handle this event — unhandled 'error' events crash the Node.js process.
+    logger.error({ err }, "browser-use: failed to spawn process");
+  });
   child.stdout?.on("data", (d: Buffer) => {
     const line = d.toString().trim();
     if (line) logger.info({ service: "browser-use" }, line);
