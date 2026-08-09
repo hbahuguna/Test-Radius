@@ -28,7 +28,7 @@ export const PRICING_TIERS: PricingTier[] = [
       "Get started with zero commitment — full shadow mode analysis, no credit card needed.",
     features: [
       "Full shadow mode analysis",
-      "Unlimited PRs",
+      "Five PRs",
       "GitHub Actions integration",
       "Community support",
     ],
@@ -168,7 +168,7 @@ export const FAQ_ITEMS = [
   {
     question: "Can I start with the Free plan and upgrade later?",
     answer:
-      "Absolutely. The Free plan is yours forever with full shadow mode analysis and unlimited PRs. When you're ready to scale, upgrade to Starter or Growth to unlock automated test selection, explainability dashboards, and team features.",
+      "Absolutely. The Free plan is yours forever with full shadow mode analysis and five PRs. When you're ready to scale, upgrade to Starter or Growth to unlock automated test selection, explainability dashboards, and team features.",
   },
   {
     question: "How does annual billing work?",
