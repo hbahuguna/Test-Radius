@@ -5,13 +5,11 @@ import { logger } from "./logger";
 const BROWSER_USE_PORT = 8001;
 const BROWSER_USE_URL = process.env.BROWSER_USE_URL ?? `http://localhost:${BROWSER_USE_PORT}`;
 
-// Track whether the service is healthy and ready to accept runs.
-let _serviceReady = false;
-
-/** Returns true if the browser-use service is confirmed healthy. */
-export function isBrowserUseReady(): boolean {
-  return _serviceReady;
-}
+// Cached health state — re-checked every CACHE_TTL_MS so we never block on a stale flag.
+const CACHE_TTL_MS = 20_000; // re-check every 20 seconds at most
+let _cachedReady: boolean | null = null;
+let _cacheExpiry = 0;
+let _externalService = false;
 
 /** Returns true if the configured BROWSER_USE_URL points at localhost — meaning
  *  we need to manage the Python service ourselves. */
@@ -24,31 +22,36 @@ function isLocalBrowserUse(): boolean {
   }
 }
 
-/** Poll the browser-use /health endpoint until it responds or we time out. */
-async function waitForBrowserUse(timeoutMs = 300_000): Promise<boolean> {
-  const healthUrl = `http://localhost:${BROWSER_USE_PORT}/health`;
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(healthUrl, { signal: AbortSignal.timeout(3000) });
-      if (res.ok) return true;
-    } catch {
-      // not ready yet
-    }
-    await new Promise((r) => setTimeout(r, 2000));
+/** Live health check — result is cached for CACHE_TTL_MS to keep latency low. */
+export async function isBrowserUseReady(): Promise<boolean> {
+  // External service: treat as always ready (let the first real request surface errors).
+  if (_externalService) return true;
+
+  const now = Date.now();
+  if (_cachedReady !== null && now < _cacheExpiry) {
+    return _cachedReady;
   }
-  return false;
+
+  try {
+    const res = await fetch(`http://localhost:${BROWSER_USE_PORT}/health`, {
+      signal: AbortSignal.timeout(1500),
+    });
+    _cachedReady = res.ok;
+  } catch {
+    _cachedReady = false;
+  }
+  _cacheExpiry = Date.now() + CACHE_TTL_MS;
+  return _cachedReady ?? false;
 }
 
 /**
  * Spawns the browser-use Python microservice in the background when
- * BROWSER_USE_URL points at localhost. Safe to call multiple times —
- * it checks the health endpoint first and skips if already running.
+ * BROWSER_USE_URL points at localhost. Returns immediately — health is
+ * tracked via isBrowserUseReady() polling instead of a blocking wait.
  */
 export async function ensureBrowserUseRunning(): Promise<void> {
   if (!isLocalBrowserUse()) {
-    // External service — assume it's ready; let the first real request fail naturally if not.
-    _serviceReady = true;
+    _externalService = true;
     logger.info({ url: BROWSER_USE_URL }, "browser-use: using external service, skipping spawn");
     return;
   }
@@ -59,7 +62,8 @@ export async function ensureBrowserUseRunning(): Promise<void> {
       signal: AbortSignal.timeout(1500),
     });
     if (res.ok) {
-      _serviceReady = true;
+      _cachedReady = true;
+      _cacheExpiry = Date.now() + CACHE_TTL_MS;
       logger.info("browser-use: already running, skipping spawn");
       return;
     }
@@ -102,14 +106,20 @@ export async function ensureBrowserUseRunning(): Promise<void> {
   });
   child.on("exit", (code, signal) => {
     logger.warn({ code, signal }, "browser-use: process exited");
+    // Clear the cache so the next readiness check detects the outage.
+    _cachedReady = false;
+    _cacheExpiry = 0;
   });
 
-  logger.info("browser-use: waiting for service to become healthy (up to 5 min — first boot downloads Chromium)...");
-  const ready = await waitForBrowserUse(300_000);
-  if (ready) {
-    _serviceReady = true;
-    logger.info("browser-use: service is healthy ✓");
-  } else {
-    logger.error("browser-use: service did not become healthy within 300s — agent runs will fail");
+  // Log a warning if the service takes a very long time (informational only —
+  // isBrowserUseReady() will catch it whenever it actually comes up).
+  const warnTimer = setTimeout(() => {
+    logger.warn("browser-use: service has not become healthy after 10 min — check logs above");
+  }, 600_000);
+  // Don't let this timer keep the process alive.
+  if (typeof warnTimer === "object" && warnTimer !== null && "unref" in warnTimer) {
+    (warnTimer as NodeJS.Timeout).unref();
   }
+
+  logger.info("browser-use: service spawned — readiness will be detected automatically via health checks");
 }

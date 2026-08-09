@@ -99,7 +99,7 @@ router.post("/run", async (req: Request, res: Response) => {
 
   // If the Python browser-use service is still warming up (e.g. downloading Chromium on first
   // cold start), tell the user right away instead of letting the fetch fail silently.
-  if (!isBrowserUseReady()) {
+  if (!(await isBrowserUseReady())) {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
