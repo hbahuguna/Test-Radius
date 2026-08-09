@@ -1,5 +1,10 @@
 {pkgs}: {
   deps = [
+    pkgs.libgbm
+    pkgs.systemd
+    pkgs.pango
+    pkgs.cairo
+    pkgs.libxkbcommon
     pkgs.mesa
     pkgs.libdrm
     pkgs.expat
