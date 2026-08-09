@@ -562,6 +562,11 @@ async def run_agent_task(run_id: str, request: RunRequest):
             final_result = history.final_result() if hasattr(history, 'final_result') else None
             logger.info(f"Done callback called: success={success}, result={final_result}")
 
+            # Finalize the video FIRST (time-boxed by finalize_video_safe) so it is
+            # ready and its path is baked into the done event before serialization —
+            # otherwise the stream receives video_path=null and the video never shows.
+            video_path = await finalize_video_safe(run_id, browser)
+
             all_steps = state.get_step_events(run_id)
             aggregated_trace: List[Dict[str, Any]] = []
             for step_event in all_steps:
@@ -580,12 +585,10 @@ async def run_agent_task(run_id: str, request: RunRequest):
                 "success": success,
                 "message": final_result or "Task completed",
                 "duration": history.total_duration_seconds() if hasattr(history, 'total_duration_seconds') else 0,
-                "video_path": None,
+                "video_path": f"/run/{run_id}/video" if video_path else None,
                 "action_trace": aggregated_trace,
             }
 
-            # Deliver the done event FIRST so the stream/UI always completes when
-            # the agent is done — video finalization below must not gate it.
             state.add_step_event(run_id, event)
 
             if run_id in state.chat_queues:
@@ -593,12 +596,6 @@ async def run_agent_task(run_id: str, request: RunRequest):
                     state.chat_queues[run_id].put_nowait(event)
                 except asyncio.QueueFull:
                     pass
-
-            # Best-effort video finalization, time-boxed so a stuck encoder cannot
-            # leave the run task waiting (which freezes the stream at the last step).
-            video_path = await finalize_video_safe(run_id, browser)
-            if video_path:
-                event["video_path"] = f"/run/{run_id}/video"
 
         async def on_initial_screenshot(screenshot_b64: str):
             """Called right after browser navigates to URL (~2-3s)."""

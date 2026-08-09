@@ -342,7 +342,7 @@ router.get("/run/:id/video", async (req: Request, res: Response) => {
     .where(and(eq(agenticRunsTable.id, runId), eq(agenticRunsTable.userId, user.id)))
     .limit(1);
 
-  if (!run || !run.pythonRunId || !run.videoUrl) {
+  if (!run || !run.pythonRunId) {
     res.status(404).json({ error: "video_not_found" });
     return;
   }

@@ -604,6 +604,23 @@ export function BrowserAgent() {
                 </CardContent>
               </Card>
 
+              {/* Run video (finalized once the agent completes) */}
+              {status === "completed" && completedRunId && (
+                <Card className="rounded-xl border-border shadow-lg overflow-hidden">
+                  <CardHeader>
+                    <CardTitle className="text-lg">Run video</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <video
+                      src={`/api/browser-agent/run/${completedRunId}/video`}
+                      controls
+                      playsInline
+                      className="w-full aspect-video rounded-xl border border-border bg-black"
+                    />
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Agent Activity (Steps) */}
               <Card className="rounded-xl border-border shadow-lg flex-none min-w-0 h-[min(60vh,720px)] min-h-[360px] sm:min-h-[420px] overflow-hidden">
                 <CardHeader className="pb-2">
