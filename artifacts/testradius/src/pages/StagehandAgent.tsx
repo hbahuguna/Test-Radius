@@ -204,7 +204,7 @@ export function StagehandAgent() {
               <Card className="border-primary/15 bg-card/90 shadow-xl backdrop-blur">
                 <CardHeader><CardTitle className="flex items-center gap-2"><Play className="h-5 w-5 text-primary" /> Live browser</CardTitle></CardHeader>
                 <CardContent>
-                  <div className="aspect-video overflow-hidden rounded-xl border border-border bg-zinc-950">
+<div className="aspect-video overflow-hidden rounded-xl border border-border bg-white">
                     {screenshot ? <img src={screenshot} alt="Live Stagehand browser state" className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{running ? "Launching browser…" : "Browser preview appears during a run"}</div>}
                   </div>
                 </CardContent>

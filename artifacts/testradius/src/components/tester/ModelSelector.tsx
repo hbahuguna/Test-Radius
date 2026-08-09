@@ -33,13 +33,13 @@ export const PROVIDERS: { id: string; label: string }[] = [
 // is the BYOK default; OpenAI gpt-4o/4.1 is the reliable clicking path.
 export const PROVIDER_MODELS: Record<string, ProviderModel[]> = {
   opencode: [
-    { id: "big-pickle", label: "big-pickle (reasoning — may fail clicks)" },
-    { id: "deepseek-v4-flash-free", label: "deepseek-v4-flash-free (reasoning — may fail clicks)" },
-    { id: "nemotron-3-ultra-free", label: "nemotron-3-ultra-free (reasoning)" },
-    { id: "north-mini-code-free", label: "north-mini-code-free (reasoning)" },
-    { id: "mimo-v2.5-free", label: "mimo-v2.5-free (reasoning)" },
-    { id: "laguna-s-2.1-free", label: "laguna-s-2.1-free (reasoning)" },
-    { id: "hy3-free", label: "hy3-free (reasoning)" },
+    { id: "big-pickle", label: "big-pickle" },
+    { id: "deepseek-v4-flash-free", label: "deepseek-v4-flash-free" },
+    { id: "nemotron-3-ultra-free", label: "nemotron-3-ultra-free" },
+    { id: "north-mini-code-free", label: "north-mini-code-free" },
+    { id: "mimo-v2.5-free", label: "mimo-v2.5-free" },
+    { id: "laguna-s-2.1-free", label: "laguna-s-2.1-free" },
+    { id: "hy3-free", label: "hy3-free" },
   ],
   openai: [
     { id: "gpt-4o-mini", label: "GPT-4o mini" },
@@ -134,15 +134,6 @@ export function ModelSelector({
       <p className="text-xs text-muted-foreground">
         Bring your own provider key. Each run uses 1 TestRadius credit.
       </p>
-
-      {provider === "opencode" && (
-        <p className="text-xs text-amber-600">
-          OpenCode Zen runs these models in thinking mode, which currently
-          breaks Stagehand's forced tool calls (agent/observe can't click). For
-          reliable clicks use the OpenAI provider (gpt-4o) or an OpenAI-compatible
-          non-reasoning model.
-        </p>
-      )}
     </div>
   );
 }

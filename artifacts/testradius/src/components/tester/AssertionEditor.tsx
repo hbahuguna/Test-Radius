@@ -43,13 +43,17 @@ export function AssertionEditor({ assertions, onChange }: AssertionEditorProps) 
               value={a.pattern ?? ""}
               onChange={(e) => update(idx, { pattern: e.target.value })}
             />
+          ) : a.type === "text" ? (
+            <Input
+              placeholder="expected text"
+              value={a.expected ?? ""}
+              onChange={(e) => update(idx, { expected: e.target.value })}
+            />
           ) : (
             <Input
-              placeholder={a.type === "text" ? "expected text" : "element / text to see"}
-              value={a.target ?? a.expected ?? ""}
-              onChange={(e) =>
-                update(idx, a.type === "text" ? { expected: e.target.value } : { target: e.target.value })
-              }
+              placeholder="element / text to see"
+              value={a.target ?? ""}
+              onChange={(e) => update(idx, { target: e.target.value })}
             />
           )}
           <Button variant="ghost" size="icon" onClick={() => remove(idx)} aria-label="Remove assertion">

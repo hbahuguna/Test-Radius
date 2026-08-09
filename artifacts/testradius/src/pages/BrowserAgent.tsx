@@ -8,7 +8,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "wouter";
 import { Layout } from "@/components/Layout";
 import { AgentChatPanel, type UserMessageEvent } from "@/components/browser-agent/AgentChatPanel";
-import { LiveBrowserView } from "@/components/browser-agent/LiveBrowserView";
 import { ChatInput } from "@/components/browser-agent/ChatInput";
 import { ControlBar } from "@/components/browser-agent/ControlBar";
 import { ModelSelector, defaultModelFor } from "@/components/tester/ModelSelector";
@@ -122,7 +121,7 @@ export function BrowserAgent() {
     };
   }, []);
 
-  // Initial screenshot polling: capture browser state while agent starts up
+  // Screenshot polling: keep the live browser fresh for the whole run
   useEffect(() => {
     if (status !== "running") {
       if (screenshotTimer.current) {
@@ -133,17 +132,8 @@ export function BrowserAgent() {
       return;
     }
 
-    // Don't start polling if we already got a step event
-    if (hasReceivedFirstStep.current) return;
-
-    // Poll every 500ms until first step arrives
+    // Poll every 1s so the preview stays in sync even between step events
     screenshotTimer.current = setInterval(async () => {
-      if (hasReceivedFirstStep.current) {
-        clearInterval(screenshotTimer.current!);
-        screenshotTimer.current = null;
-        return;
-      }
-
       try {
         const result = await getBrowserAgentScreenshot();
         if (isValidScreenshot(result.screenshot)) {
@@ -152,22 +142,13 @@ export function BrowserAgent() {
       } catch {
         // Ignore polling errors
       }
-    }, 500);
-
-    // Safety timeout: stop polling after 30s even if no step received
-    const timeout = setTimeout(() => {
-      if (screenshotTimer.current) {
-        clearInterval(screenshotTimer.current);
-        screenshotTimer.current = null;
-      }
-    }, 30000);
+    }, 1000);
 
     return () => {
       if (screenshotTimer.current) {
         clearInterval(screenshotTimer.current);
         screenshotTimer.current = null;
       }
-      clearTimeout(timeout);
     };
   }, [status]);
 
@@ -231,24 +212,10 @@ export function BrowserAgent() {
             if (event.event === "started") {
               currentRunIdRef.current = event.run_id;
             } else if (event.event === "loading") {
-              if (!hasReceivedFirstStep.current) {
-                hasReceivedFirstStep.current = true;
-                if (screenshotTimer.current) {
-                  clearInterval(screenshotTimer.current);
-                  screenshotTimer.current = null;
-                }
-              }
               if (isValidScreenshot(event.screenshot)) setScreenshot(event.screenshot);
               if (event.url) setCurrentUrl(event.url);
               if (event.title) setCurrentTitle(event.title);
             } else if (event.event === "step") {
-              if (!hasReceivedFirstStep.current) {
-                hasReceivedFirstStep.current = true;
-                if (screenshotTimer.current) {
-                  clearInterval(screenshotTimer.current);
-                  screenshotTimer.current = null;
-                }
-              }
               if (isValidScreenshot(event.screenshot)) {
                 setScreenshot(event.screenshot);
               }
@@ -616,14 +583,24 @@ export function BrowserAgent() {
             {/* Right Column: Browser + Chat */}
             <div className="flex min-w-0 flex-col gap-4">
               {/* Live Browser View */}
-              <Card className="rounded-xl border-border shadow-lg h-[400px] shrink-0 overflow-hidden">
-                <CardContent className="p-0 h-full">
-                  <LiveBrowserView
-                    screenshot={screenshot}
-                    status={status}
-                    url={currentUrl}
-                    title={currentTitle}
-                  />
+              <Card className="rounded-xl border-border shadow-lg overflow-hidden">
+                <CardHeader>
+                  <CardTitle className="text-lg">Live browser</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="aspect-video overflow-hidden rounded-xl border border-border bg-white">
+                    {screenshot ? (
+                      <img
+                        src={screenshot}
+                        alt="Live browser view"
+                        className="h-full w-full object-contain"
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                        {status === "running" ? "Launching browser…" : "Browser preview appears during a run"}
+                      </div>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
 
