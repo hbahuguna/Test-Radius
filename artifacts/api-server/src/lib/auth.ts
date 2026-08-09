@@ -1,8 +1,14 @@
 import { db } from "@workspace/db";
-import { usersTable, creditLedgerTable } from "@workspace/db/schema";
-import { eq } from "drizzle-orm";
+import { usersTable, creditLedgerTable, couponsTable, couponRedemptionsTable } from "@workspace/db/schema";
+import { eq, and, sql } from "drizzle-orm";
 import type { AuthedUser } from "../middlewares/auth";
 import { logger } from "../lib/logger";
+
+export class CouponError extends Error {
+  constructor(public code: string, message: string) {
+    super(message);
+  }
+}
 
 const FREE_SIGNUP_CREDITS = 20;
 
@@ -119,6 +125,44 @@ export async function addCredits(userId: string, amount: number, reason: string)
     .where(eq(usersTable.id, userId));
 
   await db.insert(creditLedgerTable).values({ userId, amount, reason });
+}
+
+/**
+ * Redeem a coupon code for the given user. Validates the code (exists,
+ * active, not expired, redemptions remaining) and that the user hasn't
+ * already redeemed it, then grants credits via addCredits. Throws CouponError
+ * on any validation failure so callers can surface a clear message.
+ */
+export async function redeemCoupon(userId: string, codeRaw: string): Promise<{ credits: number }> {
+  const code = (codeRaw ?? "").trim().toUpperCase();
+  if (!code) throw new CouponError("invalid_code", "A coupon code is required.");
+
+  const [coupon] = await db.select().from(couponsTable).where(eq(couponsTable.code, code)).limit(1);
+  if (!coupon) throw new CouponError("not_found", "That coupon code does not exist.");
+  if (!coupon.active) throw new CouponError("inactive", "That coupon code is no longer active.");
+  if (coupon.expiresAt && coupon.expiresAt.getTime() < Date.now())
+    throw new CouponError("expired", "That coupon code has expired.");
+  if (coupon.maxRedemptions != null && coupon.redemptions >= coupon.maxRedemptions)
+    throw new CouponError("max_reached", "That coupon code has reached its redemption limit.");
+
+  const already = await db
+    .select()
+    .from(couponRedemptionsTable)
+    .where(and(eq(couponRedemptionsTable.userId, userId), eq(couponRedemptionsTable.code, code)))
+    .limit(1);
+  if (already.length > 0) throw new CouponError("already_redeemed", "You have already redeemed this coupon.");
+
+  await addCredits(userId, coupon.credits, "coupon_redemption");
+
+  await db
+    .update(couponsTable)
+    .set({ redemptions: sql`${couponsTable.redemptions} + 1` })
+    .where(eq(couponsTable.code, code));
+
+  await db.insert(couponRedemptionsTable).values({ userId, code });
+
+  logger.info({ userId, code, credits: coupon.credits }, "Coupon redeemed");
+  return { credits: coupon.credits };
 }
 
 function toRecord(u: typeof usersTable.$inferSelect): UserRecord {

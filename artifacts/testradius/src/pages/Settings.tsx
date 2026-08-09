@@ -14,8 +14,11 @@ import {
   deleteApiKey,
   getCreditBalance,
   saveJiraConnection,
+  redeemCoupon,
+  previewCoupon,
   type UserApiKey,
   type CreditBalance,
+  type CouponPreview,
 } from "@/lib/agentic-api";
 
 const PROVIDERS = [
@@ -23,6 +26,8 @@ const PROVIDERS = [
   { id: "openai", label: "OpenAI" },
   { id: "anthropic", label: "Anthropic" },
   { id: "google", label: "Google" },
+  { id: "openrouter", label: "OpenRouter" },
+  { id: "poolside", label: "Poolside (Laguna XS 2.1)" },
 ];
 
 export function Settings() {
@@ -33,7 +38,12 @@ export function Settings() {
   const [credits, setCredits] = useState<CreditBalance | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const jiraKey = keys.find((k) => k.provider === "jira");
+  const [couponCode, setCouponCode] = useState("");
+  const [couponPreview, setCouponPreview] = useState<CouponPreview | null>(null);
+  const [couponBusy, setCouponBusy] = useState(false);
+  const [couponMsg, setCouponMsg] = useState<string | null>(null);
+
+  const jiraKey = (keys ?? []).find((k) => k.provider === "jira");
   const [jiraBase, setJiraBase] = useState("");
   const [jiraEmail, setJiraEmail] = useState("");
   const [jiraToken, setJiraToken] = useState("");
@@ -58,15 +68,15 @@ export function Settings() {
     }
   };
 
-  const load = async () => {
-    try {
-      const [k, c] = await Promise.all([getApiKeys(), getCreditBalance()]);
-      setKeys(k);
-      setCredits(c);
-    } catch {
-      toast.error("Failed to load settings");
-    }
-  };
+const load = async () => {
+  try {
+    const [k, c] = await Promise.all([getApiKeys(), getCreditBalance()]);
+    setKeys(k ?? []);
+    setCredits(c ?? null);
+  } catch {
+    toast.error("Failed to load settings");
+  }
+};
 
   useEffect(() => {
     load();
@@ -95,6 +105,40 @@ export function Settings() {
       load();
     } catch {
       toast.error("Failed to delete key");
+    }
+  };
+
+  const handlePreviewCoupon = async () => {
+    const code = couponCode.trim().toUpperCase();
+    if (!code) return;
+    setCouponBusy(true);
+    setCouponMsg(null);
+    setCouponPreview(null);
+    try {
+      const p = await previewCoupon(code);
+      setCouponPreview(p);
+    } catch (e: any) {
+      setCouponMsg(e?.message || "That coupon code does not exist.");
+    } finally {
+      setCouponBusy(false);
+    }
+  };
+
+  const handleRedeemCoupon = async () => {
+    const code = couponCode.trim().toUpperCase();
+    if (!code) return;
+    setCouponBusy(true);
+    setCouponMsg(null);
+    try {
+      const { credits_granted } = await redeemCoupon(code);
+      toast.success(`Redeemed! +${credits_granted} credits added.`);
+      setCouponCode("");
+      setCouponPreview(null);
+      load();
+    } catch (e: any) {
+      setCouponMsg(e?.message || "Failed to redeem coupon.");
+    } finally {
+      setCouponBusy(false);
     }
   };
 
@@ -155,6 +199,52 @@ export function Settings() {
         <Card className="mb-6">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
+              <Coins className="h-5 w-5" /> Redeem a Coupon
+            </CardTitle>
+            <CardDescription>
+              Have a promo code? Enter it to add credits to your account.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-end gap-2">
+              <div className="flex-1 space-y-1.5">
+                <Label>Coupon code</Label>
+                <Input
+                  placeholder="e.g. LAUNCH20"
+                  value={couponCode}
+                  onChange={(e) => {
+                    setCouponCode(e.target.value);
+                    setCouponPreview(null);
+                    setCouponMsg(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleRedeemCoupon();
+                  }}
+                />
+              </div>
+              <Button variant="outline" onClick={handlePreviewCoupon} disabled={couponBusy || !couponCode.trim()}>
+                Check
+              </Button>
+              <Button onClick={handleRedeemCoupon} disabled={couponBusy || !couponCode.trim()}>
+                Redeem
+              </Button>
+            </div>
+            {couponPreview && !couponPreview.expired && (
+              <p className="text-sm text-muted-foreground">
+                This code grants <span className="font-medium text-foreground">{couponPreview.credits} credits</span>
+                {couponPreview.description ? ` — ${couponPreview.description}` : ""}.
+              </p>
+            )}
+            {couponPreview?.expired && (
+              <p className="text-sm text-destructive">This coupon code has expired.</p>
+            )}
+            {couponMsg && <p className="text-sm text-destructive">{couponMsg}</p>}
+          </CardContent>
+        </Card>
+
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
               <KeyRound className="h-5 w-5" /> API Keys (BYOK)
             </CardTitle>
             <CardDescription>
@@ -166,7 +256,7 @@ export function Settings() {
               {keys.length === 0 && (
                 <p className="text-sm text-muted-foreground">No API keys saved yet.</p>
               )}
-              {keys.map((k) => (
+              {keys?.map((k) => (
                 <div key={k.id} className="flex items-center justify-between border rounded-md p-3">
                   <div>
                     <span className="font-medium capitalize">{k.provider}</span>

@@ -65,6 +65,10 @@ export function validateKeyFormat(provider: string, key: string): boolean {
       return trimmed.length > 20; // Google API keys are variable format
     case "opencode":
       return trimmed.length > 10; // OpenCode Zen API keys are variable format
+    case "openrouter":
+      return trimmed.startsWith("sk-or-") && trimmed.length > 20;
+    case "poolside":
+      return trimmed.startsWith("sky_") && trimmed.length > 20;
     case "jira": {
       // Jira credentials are stored as a JSON object:
       // { baseUrl, email, token }

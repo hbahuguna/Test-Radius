@@ -19,14 +19,27 @@ export const PROVIDERS: { id: string; label: string }[] = [
   { id: "openai", label: "OpenAI key" },
   { id: "anthropic", label: "Anthropic key" },
   { id: "google", label: "Google key" },
+  { id: "openrouter", label: "OpenRouter key" },
+  { id: "poolside", label: "Poolside key (Laguna XS 2.1)" },
 ];
 
 // Curated model lists per provider. The first entry is the default.
+//
+// Opcode Zen currently exposes reasoning models (big-pickle, deepseek-v4-flash,
+// north-mini-code, ...) that run in "thinking mode". Thinking mode rejects
+// Stagehand's forced tool_choice during act/click and the done finalization,
+// so those models cannot reliably click. Keep option that work and label the
+// rest so users know what to switch to. OpenCode is kept available because it
+// is the BYOK default; OpenAI gpt-4o/4.1 is the reliable clicking path.
 export const PROVIDER_MODELS: Record<string, ProviderModel[]> = {
   opencode: [
-    { id: "hy3-free", label: "hy3-free" },
-    { id: "claude-3-5-sonnet", label: "Claude 3.5 Sonnet" },
-    { id: "gpt-4o", label: "GPT-4o" },
+    { id: "big-pickle", label: "big-pickle (reasoning — may fail clicks)" },
+    { id: "deepseek-v4-flash-free", label: "deepseek-v4-flash-free (reasoning — may fail clicks)" },
+    { id: "nemotron-3-ultra-free", label: "nemotron-3-ultra-free (reasoning)" },
+    { id: "north-mini-code-free", label: "north-mini-code-free (reasoning)" },
+    { id: "mimo-v2.5-free", label: "mimo-v2.5-free (reasoning)" },
+    { id: "laguna-s-2.1-free", label: "laguna-s-2.1-free (reasoning)" },
+    { id: "hy3-free", label: "hy3-free (reasoning)" },
   ],
   openai: [
     { id: "gpt-4o-mini", label: "GPT-4o mini" },
@@ -45,6 +58,18 @@ export const PROVIDER_MODELS: Record<string, ProviderModel[]> = {
     { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
     { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite" },
     { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+  ],
+  openrouter: [
+    { id: "poolside/laguna-xs-2.1", label: "Laguna XS 2.1" },
+    { id: "poolside/sonar", label: "Sonar" },
+    { id: "poolside/hermes-3", label: "Hermes 3" },
+    { id: "poolside/laguna", label: "Laguna" },
+  ],
+  poolside: [
+    { id: "poolside/laguna-xs-2.1", label: "Laguna XS 2.1 (default)" },
+    { id: "poolside/sonar", label: "Sonar" },
+    { id: "poolside/hermes-3", label: "Hermes 3" },
+    { id: "poolside/laguna", label: "Laguna" },
   ],
 };
 
@@ -67,7 +92,7 @@ export function ModelSelector({
   onModelIdChange,
   keys,
 }: ModelSelectorProps) {
-  const hasKey = (p: string) => keys.some((k) => k.provider === p);
+  const hasKey = (p: string) => (keys ?? []).some((k) => k.provider === p);
   const models = PROVIDER_MODELS[provider] ?? [];
 
   return (
@@ -109,6 +134,15 @@ export function ModelSelector({
       <p className="text-xs text-muted-foreground">
         Bring your own provider key. Each run uses 1 TestRadius credit.
       </p>
+
+      {provider === "opencode" && (
+        <p className="text-xs text-amber-600">
+          OpenCode Zen runs these models in thinking mode, which currently
+          breaks Stagehand's forced tool calls (agent/observe can't click). For
+          reliable clicks use the OpenAI provider (gpt-4o) or an OpenAI-compatible
+          non-reasoning model.
+        </p>
+      )}
     </div>
   );
 }

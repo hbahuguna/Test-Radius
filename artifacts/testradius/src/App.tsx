@@ -1,5 +1,5 @@
 import React from "react";
-import { Route, Switch } from "wouter";
+import { Redirect, Route, Switch } from "wouter";
 import { Home } from "./pages/Home";
 import { BlogIndex } from "./pages/BlogIndex";
 import { BlogPost } from "./pages/BlogPost";
@@ -9,8 +9,11 @@ import { DocsPage } from "./pages/DocsPage";
 import { Login } from "./pages/Login";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { Tester } from "./pages/Tester";
+import { BrowserAuto } from "./pages/BrowserAuto";
 import { Settings } from "./pages/Settings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { StagehandAgent } from "./pages/StagehandAgent";
+import { BrowserAgent } from "./pages/BrowserAgent";
 
 function App() {
   return (
@@ -58,6 +61,21 @@ function App() {
       <Route path="/tester">
         <ProtectedRoute>
           <Tester />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/browser-auto">
+        <ProtectedRoute>
+          <BrowserAuto />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/browser-agent">
+        <ProtectedRoute>
+          <BrowserAgent />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/stagehand-agent">
+        <ProtectedRoute>
+          <StagehandAgent />
         </ProtectedRoute>
       </Route>
       <Route path="/settings">

@@ -1,0 +1,27 @@
+tools:
+    shell:
+        allow:
+            - find *
+            - head *
+            - ls *
+            - xargs *
+            - cd *
+            - npx tsc *
+            - pnpm *
+            - ps aux
+            - grep *
+            - lsof *
+            - netstat *
+            - ps *
+            - tr *
+            - kill 48199
+            - sleep 1
+            - node *
+            - sleep 2
+            - echo *
+            - curl *
+            - cat *
+            - git log *
+            - git diff *
+            - git show 065d7e8 *
+            - git show *

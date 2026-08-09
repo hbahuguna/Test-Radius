@@ -19,6 +19,7 @@ interface RunFormProps {
   assertions: Assertion[];
   model: string;
   modelId: string;
+  mode: "reactive" | "planned";
   keys: UserApiKey[];
   loading: boolean;
   onUrlChange: (v: string) => void;
@@ -26,6 +27,7 @@ interface RunFormProps {
   onAssertionsChange: (a: Assertion[]) => void;
   onModelChange: (m: string) => void;
   onModelIdChange: (m: string) => void;
+  onModeChange: (m: "reactive" | "planned") => void;
   onRun: () => void;
 }
 
@@ -35,6 +37,7 @@ export function RunForm({
   assertions,
   model,
   modelId,
+  mode,
   keys,
   loading,
   onUrlChange,
@@ -42,6 +45,7 @@ export function RunForm({
   onAssertionsChange,
   onModelChange,
   onModelIdChange,
+  onModeChange,
   onRun,
 }: RunFormProps) {
   const [jiraOpen, setJiraOpen] = useState(false);
@@ -138,7 +142,7 @@ export function RunForm({
                   criteria into your test goal. This uses 1 credit.
                 </DialogDescription>
               </DialogHeader>
-              {!keys.some((k) => k.provider === "jira") ? (
+              {!keys?.some((k) => k.provider === "jira") ? (
                 <div className="space-y-3">
                   <p className="text-sm text-muted-foreground">
                     Connect your Jira instance first. Add your Jira Base URL, email, and API
@@ -254,6 +258,35 @@ export function RunForm({
           onModelIdChange={onModelIdChange}
           keys={keys}
         />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>Execution Mode</Label>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant={mode === "reactive" ? "default" : "outline"}
+            size="sm"
+            className="flex-1"
+            onClick={() => onModeChange("reactive")}
+          >
+            Reactive
+          </Button>
+          <Button
+            type="button"
+            variant={mode === "planned" ? "default" : "outline"}
+            size="sm"
+            className="flex-1"
+            onClick={() => onModeChange("planned")}
+          >
+            Planned
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {mode === "planned"
+            ? "Breaks the goal into micro-steps first. Better for complex tasks and small models."
+            : "Single-step loop where the model plans and acts each turn. Good for simple tasks."}
+        </p>
       </div>
 
       <div className="space-y-1.5">

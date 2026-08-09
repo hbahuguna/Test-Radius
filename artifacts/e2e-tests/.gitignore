@@ -1,2 +1,3 @@
-coverage/
 .coverage-raw/
+playwright-report/
+test-results/

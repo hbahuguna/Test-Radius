@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures/test";
+import { test as stagehandTest, expect as stagehandExpect } from "../fixtures/stagehand";
 import { CareersPage } from "../pages/CareersPage";
 import { mockFormspreeSuccess, mockFormspreeError, mockFormspreeNetworkError } from "../fixtures/mocks";
 import { FORM_DATA } from "../fixtures/test-data";
@@ -42,6 +43,57 @@ test.describe("Careers Page", () => {
       await trigger.click();
       await expect(careers.page.getByText("Key Responsibilities")).not.toBeVisible();
     });
+  });
+
+  // ── Stagehand self-healing tests ──────────────────────────────
+
+  stagehandTest("renders hero section (self-healing)", async ({ stagehandPage, stagehandAct }) => {
+    await stagehandPage.goto("/jobs");
+    await stagehandAct("Wait for the page to load");
+    await stagehandExpect(stagehandPage.getByRole("heading").filter({ hasText: "Build the future" })).toBeVisible();
+  });
+
+  stagehandTest("loads at both /jobs and /careers routes (self-healing)", async ({ stagehandPage, stagehandAct }) => {
+    await stagehandPage.goto("/jobs");
+    await stagehandExpect(stagehandPage.getByRole("heading").filter({ hasText: "Build the future" })).toBeVisible();
+
+    await stagehandPage.goto("/careers");
+    await stagehandExpect(stagehandPage.getByRole("heading").filter({ hasText: "Build the future" })).toBeVisible();
+  });
+
+  stagehandTest.describe("Accordion (self-healing)", () => {
+    stagehandTest("both job roles are present in accordion", async ({ stagehandPage, stagehandAct }) => {
+      await stagehandPage.goto("/jobs");
+      await stagehandAct("Wait for the accordion to appear");
+      await stagehandExpect(stagehandPage.getByRole("button", { name: "Freelance Full‑Stack Developer" })).toBeVisible();
+      await stagehandExpect(stagehandPage.getByRole("button", { name: "Freelance Sales & Lead Gen Specialist" })).toBeVisible();
+    });
+
+    stagehandTest("clicking accordion trigger reveals content", async ({ stagehandPage, stagehandAct }) => {
+      await stagehandPage.goto("/jobs");
+      await stagehandAct('Click the "Freelance Full‑Stack Developer" accordion trigger');
+      await stagehandExpect(stagehandPage.getByText("Key Responsibilities")).toBeVisible();
+    });
+
+    stagehandTest("clicking accordion trigger again hides content", async ({ stagehandPage, stagehandAct }) => {
+      await stagehandPage.goto("/jobs");
+      await stagehandAct('Click the "Freelance Full‑Stack Developer" accordion trigger');
+      await stagehandExpect(stagehandPage.getByText("Key Responsibilities")).toBeVisible();
+      await stagehandAct('Click the "Freelance Full‑Stack Developer" accordion trigger');
+      await stagehandExpect(stagehandPage.getByText("Key Responsibilities")).not.toBeVisible();
+    });
+  });
+
+  stagehandTest("View PDF button links to orientation sheet", async ({ stagehandPage }) => {
+    await stagehandPage.goto("/jobs");
+    const pdfLink = stagehandPage.getByRole("link", { name: "View PDF" });
+    await stagehandExpect(pdfLink).toBeVisible();
+    await stagehandExpect(pdfLink).toHaveAttribute("href", "/orientation-sheet.pdf");
+  });
+
+  stagehandTest("email fallback link is visible", async ({ stagehandPage }) => {
+    await stagehandPage.goto("/jobs");
+    await stagehandExpect(stagehandPage.getByRole("link", { name: "jobs@testradius.dev" })).toBeVisible();
   });
 
   test("View PDF button links to orientation sheet", async () => {

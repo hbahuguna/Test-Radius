@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures/test";
+import { test as stagehandTest, expect as stagehandExpect } from "../fixtures/stagehand";
 import { mockWeb3FormsSuccess, mockWeb3FormsError } from "../fixtures/mocks";
 import { FORM_DATA } from "../fixtures/test-data";
 
@@ -6,6 +7,15 @@ test.describe("Early Access Form", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
     await page.locator("#early-access-form").scrollIntoViewIfNeeded();
+  });
+
+  stagehandTest("renders all form fields (self-healing)", async ({ stagehandPage, stagehandAct }) => {
+    await stagehandPage.goto("/");
+    await stagehandAct("Scroll to the early access form section");
+    await stagehandExpect(stagehandPage.locator("#email")).toBeVisible();
+    await stagehandExpect(stagehandPage.locator("#company")).toBeVisible();
+    await stagehandExpect(stagehandPage.locator("#role")).toBeVisible();
+    await stagehandExpect(stagehandPage.getByRole("button", { name: "Request Early Access" })).toBeVisible();
   });
 
   test("renders all form fields", async ({ page }) => {

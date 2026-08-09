@@ -10,6 +10,7 @@ import { RunForm } from "@/components/tester/RunForm";
 import { defaultModelFor } from "@/components/tester/ModelSelector";
 import { LiveProgress, type StepEvent } from "@/components/tester/LiveProgress";
 import { RunHistory } from "@/components/tester/RunHistory";
+import { InlineChat } from "@/components/tester/InlineChat";
 import {
   streamRun,
   stopRun,
@@ -40,6 +41,7 @@ export function Tester() {
   ]);
   const [model, setModel] = useState("opencode");
   const [modelId, setModelId] = useState<string>(defaultModelFor("opencode"));
+  const [mode, setMode] = useState<"reactive" | "planned">("reactive");
 
   const [credits, setCredits] = useState<CreditBalance | null>(null);
   const [keys, setKeys] = useState<UserApiKey[]>([]);
@@ -49,10 +51,10 @@ export function Tester() {
   const [status, setStatus] = useState<RunStatus>("idle");
   const [success, setSuccess] = useState<boolean | null>(null);
   const [steps, setSteps] = useState<StepEvent[]>([]);
-  const [thoughts, setThoughts] = useState<string[]>([]);
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const screenshotTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -76,6 +78,19 @@ export function Tester() {
 
   useEffect(() => {
     loadMeta();
+
+    // Start screenshot polling immediately and keep it running
+    const pollScreenshot = async () => {
+      const shot = await getScreenshot();
+      if (shot?.screenshot) setScreenshot(shot.screenshot);
+    };
+    screenshotTimer.current = setInterval(pollScreenshot, 1500);
+    pollScreenshot();
+
+    return () => {
+      // Cleanup: stop screenshot polling when component unmounts
+      if (screenshotTimer.current) clearInterval(screenshotTimer.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -107,20 +122,12 @@ export function Tester() {
     setStatus("running");
     setSuccess(null);
     setSteps([]);
-    setThoughts([]);
     setGeneratedCode(null);
     setScreenshot(null);
+    setRunError(null);
 
     const controller = new AbortController();
     abortRef.current = controller;
-
-    // Poll the live screenshot while the run is active.
-    const pollScreenshot = async () => {
-      const shot = await getScreenshot();
-      if (shot?.screenshot) setScreenshot(shot.screenshot);
-    };
-    screenshotTimer.current = setInterval(pollScreenshot, 1500);
-    pollScreenshot();
 
     const cleanedAssertions = assertions
       .filter((a) => (a.target || a.expected || a.pattern))
@@ -138,17 +145,16 @@ export function Tester() {
           goal,
           assertions: cleanedAssertions,
           headless: true,
+          mode,
           model_provider: model,
           model: modelId,
+          use_browser_use: true,
         },
         {
           signal: controller.signal,
           onEvent: (evt) => {
             const e = evt as Record<string, any>;
-            if (e.event === "thinking_delta" || e.event === "content_delta") {
-              const text = (e.text as string) ?? "";
-              if (text) setThoughts((prev) => [...prev, text]);
-            } else if (e.event === "tool_call") {
+            if (e.event === "tool_call") {
               setSteps((prev) => [
                 ...prev,
                 {
@@ -188,8 +194,10 @@ export function Tester() {
               setStatus(e.success ? "done" : "failed");
               setSuccess(Boolean(e.success));
               if (typeof e.generated_code === "string") setGeneratedCode(e.generated_code);
+              if (!e.success && typeof e.error === "string") setRunError(e.error);
             } else if (e.event === "error") {
               setStatus("failed");
+              if (typeof e.message === "string") setRunError(e.message);
             }
           },
         },
@@ -199,13 +207,21 @@ export function Tester() {
         setStatus("stopped");
       } else {
         setStatus("failed");
-        toast.error(err?.message || "Run failed");
+        if (err?.code === "insufficient_credits") {
+          toast.error("No credits remaining. Redirecting to Settings…");
+          setTimeout(() => navigate("/settings"), 1200);
+        } else if (err?.code === "no_api_key") {
+          toast.error(err?.message || "No API key configured. Redirecting to Settings…");
+          setTimeout(() => navigate("/settings"), 1200);
+        } else {
+          toast.error(err?.message || "Run failed");
+        }
       }
     } finally {
-      if (screenshotTimer.current) clearInterval(screenshotTimer.current);
       setRunning(false);
       abortRef.current = null;
       loadMeta();
+      // Don't stop screenshot polling - keep it running for chat
     }
   };
 
@@ -275,6 +291,7 @@ export function Tester() {
                   assertions={assertions}
                   model={model}
                   modelId={modelId}
+                  mode={mode}
                   keys={keys}
                   loading={running}
                   onUrlChange={setUrl}
@@ -282,6 +299,7 @@ export function Tester() {
                   onAssertionsChange={setAssertions}
                   onModelChange={setModel}
                   onModelIdChange={setModelId}
+                  onModeChange={setMode}
                   onRun={handleRun}
                 />
                 {running && (
@@ -289,21 +307,6 @@ export function Tester() {
                     Stop Run
                   </Button>
                 )}
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-xl border-border shadow-lg">
-              <CardHeader>
-                <CardTitle>Model Reasoning</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <LiveProgress
-                  steps={[]}
-                  thoughts={thoughts}
-                  screenshot={null}
-                  status={status}
-                  success={success}
-                />
               </CardContent>
             </Card>
           </div>
@@ -344,13 +347,30 @@ export function Tester() {
               <CardContent>
                 <LiveProgress
                   steps={steps}
-                  thoughts={[]}
                   screenshot={null}
                   status={status}
                   success={success}
                 />
+                {runError && status === "failed" && (
+                  <div className="mt-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+                    <p className="text-sm font-medium text-destructive mb-1">Failure Reason</p>
+                    <p className="text-sm text-destructive/80 font-mono whitespace-pre-wrap">{runError}</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
+
+            {/* Inline chat — show after run completes or fails */}
+            {(status === "done" || status === "failed" || status === "stopped") && (
+              <InlineChat
+                goal={goal}
+                url={url}
+                steps={steps.map((s) => ({ name: s.action || "unknown", args: { target: s.target }, result: s.detail }))}
+                runError={runError}
+                modelProvider={model}
+                modelId={modelId}
+              />
+            )}
           </div>
         </div>
 

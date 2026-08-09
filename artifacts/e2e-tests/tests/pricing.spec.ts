@@ -244,4 +244,73 @@ test.describe("Pricing Page", () => {
     await expect(pricing.getCalculatorTierRow("growth")).toBeVisible();
     await expect(pricing.getBestValueBadge()).toBeVisible();
   });
+
+  test("hero badge shows launch pricing validity", async ({ page }) => {
+    const pricing = new PricingPage(page);
+    await pricing.goto();
+    await expect(pricing.getHeroBadge()).toBeVisible();
+  });
+
+  test("hero subtitle is visible", async ({ page }) => {
+    const pricing = new PricingPage(page);
+    await pricing.goto();
+    await expect(pricing.getHeroSubtitle()).toBeVisible();
+  });
+
+  test("starter card displays correct monthly price", async ({ page }) => {
+    const pricing = new PricingPage(page);
+    await pricing.goto();
+    await expect(pricing.getTierPrice("Starter")).toHaveText("$79");
+  });
+
+  test("scale card displays correct price and developer range", async ({
+    page,
+  }) => {
+    const pricing = new PricingPage(page);
+    await pricing.goto();
+    await expect(pricing.getTierPrice("Scale")).toHaveText("$19");
+    await expect(page.getByText("26–75 developers").first()).toBeVisible();
+  });
+
+  test("save 17% badge is visible on billing toggle", async ({ page }) => {
+    const pricing = new PricingPage(page);
+    await pricing.goto();
+    await expect(pricing.getSaveBadge()).toBeVisible();
+  });
+
+  test("monthly billing shows annual price alternative on paid tiers", async ({
+    page,
+  }) => {
+    const pricing = new PricingPage(page);
+    await pricing.goto();
+    await expect(pricing.getAnnualPriceText("Starter")).toBeVisible();
+    await expect(pricing.getAnnualPriceText("Growth")).toBeVisible();
+    await expect(pricing.getAnnualPriceText("Scale")).toBeVisible();
+  });
+
+  test("calculator shows not in range for excluded tiers", async ({
+    page,
+  }) => {
+    const pricing = new PricingPage(page);
+    await pricing.goto();
+    await expect(pricing.getCalculatorNotInRange()).toBeVisible();
+  });
+
+  test("multiple faq items can expand independently", async ({ page }) => {
+    const pricing = new PricingPage(page);
+    await pricing.goto();
+    await expect(page.getByText("Frequently asked questions")).toBeVisible();
+
+    await pricing.getFaqAccordionTrigger("How does annual billing work").click();
+    await expect(
+      page.getByText(/Annual billing gives you the equivalent of 2 months free/),
+    ).toBeVisible();
+
+    await pricing
+      .getFaqAccordionTrigger("Can I cancel anytime")
+      .click();
+    await expect(
+      page.getByText(/All paid plans have no long-term contracts/),
+    ).toBeVisible();
+  });
 });
