@@ -1,4 +1,4 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-24", "python-base-3.13"]
 
 [deployment]
 router = "application"
@@ -130,6 +130,10 @@ VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhY
 SUPABASE_URL = "https://ntcaohfrebjwdtdmzrml.supabase.co"
 ENCRYPTION_KEY = "22bd0ccc0efed785ff33dc661a6597b24b4522e033f42aeb6ee09430cbdb342e"
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "/nix/store/qa9cnw4v5xkxyip6mb9kxqfq1z4x2dx1-chromium-138.0.7204.100/bin/chromium"
+
+[userenv.development]
+DEMO_MODE = "true"
+VITE_DEMO_MODE = "true"
 
 [nix]
 channel = "stable-25_05"
