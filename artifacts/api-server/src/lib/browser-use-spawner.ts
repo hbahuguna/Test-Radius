@@ -5,6 +5,14 @@ import { logger } from "./logger";
 const BROWSER_USE_PORT = 8001;
 const BROWSER_USE_URL = process.env.BROWSER_USE_URL ?? `http://localhost:${BROWSER_USE_PORT}`;
 
+// Track whether the service is healthy and ready to accept runs.
+let _serviceReady = false;
+
+/** Returns true if the browser-use service is confirmed healthy. */
+export function isBrowserUseReady(): boolean {
+  return _serviceReady;
+}
+
 /** Returns true if the configured BROWSER_USE_URL points at localhost — meaning
  *  we need to manage the Python service ourselves. */
 function isLocalBrowserUse(): boolean {
@@ -17,17 +25,17 @@ function isLocalBrowserUse(): boolean {
 }
 
 /** Poll the browser-use /health endpoint until it responds or we time out. */
-async function waitForBrowserUse(timeoutMs = 120_000): Promise<boolean> {
+async function waitForBrowserUse(timeoutMs = 300_000): Promise<boolean> {
   const healthUrl = `http://localhost:${BROWSER_USE_PORT}/health`;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(healthUrl, { signal: AbortSignal.timeout(2000) });
+      const res = await fetch(healthUrl, { signal: AbortSignal.timeout(3000) });
       if (res.ok) return true;
     } catch {
       // not ready yet
     }
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 2000));
   }
   return false;
 }
@@ -39,6 +47,8 @@ async function waitForBrowserUse(timeoutMs = 120_000): Promise<boolean> {
  */
 export async function ensureBrowserUseRunning(): Promise<void> {
   if (!isLocalBrowserUse()) {
+    // External service — assume it's ready; let the first real request fail naturally if not.
+    _serviceReady = true;
     logger.info({ url: BROWSER_USE_URL }, "browser-use: using external service, skipping spawn");
     return;
   }
@@ -49,6 +59,7 @@ export async function ensureBrowserUseRunning(): Promise<void> {
       signal: AbortSignal.timeout(1500),
     });
     if (res.ok) {
+      _serviceReady = true;
       logger.info("browser-use: already running, skipping spawn");
       return;
     }
@@ -93,11 +104,12 @@ export async function ensureBrowserUseRunning(): Promise<void> {
     logger.warn({ code, signal }, "browser-use: process exited");
   });
 
-  logger.info("browser-use: waiting for service to become healthy (up to 120s)...");
-  const ready = await waitForBrowserUse(120_000);
+  logger.info("browser-use: waiting for service to become healthy (up to 5 min — first boot downloads Chromium)...");
+  const ready = await waitForBrowserUse(300_000);
   if (ready) {
+    _serviceReady = true;
     logger.info("browser-use: service is healthy ✓");
   } else {
-    logger.error("browser-use: service did not become healthy within 120s — agent runs will fail");
+    logger.error("browser-use: service did not become healthy within 300s — agent runs will fail");
   }
 }

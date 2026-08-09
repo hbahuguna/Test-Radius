@@ -17,6 +17,7 @@ import {
   proxyBrowserAgentVideo,
   type BrowserAgentRunRequest,
 } from "../lib/browser-use-client";
+import { isBrowserUseReady } from "../lib/browser-use-spawner";
 import { decryptKey } from "../lib/crypto";
 import { logger } from "../lib/logger";
 import { generatePlaywrightScript, type GeneratedTraceStep } from "../lib/playwright-script";
@@ -95,6 +96,25 @@ router.post("/run", async (req: Request, res: Response) => {
     ...(byokKey && modelProvider === "opencode" ? { opencode_api_key: byokKey } : {}),
     ...(cache_key ? { cache_key } : {}),
   };
+
+  // If the Python browser-use service is still warming up (e.g. downloading Chromium on first
+  // cold start), tell the user right away instead of letting the fetch fail silently.
+  if (!isBrowserUseReady()) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.write(
+      `data: ${JSON.stringify({
+        event: "error",
+        error: "service_warming_up",
+        message:
+          "The browser agent is still starting up (downloading Chromium on first boot — this takes about 3 minutes). Please try again in a moment.",
+      })}\n\n`,
+    );
+    res.end();
+    return;
+  }
 
   const [run] = await db
     .insert(agenticRunsTable)
