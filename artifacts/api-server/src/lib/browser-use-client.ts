@@ -652,6 +652,18 @@ async function streamAgentEvents(runId: string, res: Response, options?: Browser
     reader.releaseLock();
   }
 
+  // Safety net: if the Python stream ended without a done/error, the frontend
+  // would otherwise stay "running" forever (frozen at the last step). Surface
+  // it as an error so the poller path always terminates.
+  if (finalSuccess === null && finalError === null && res && !res.writableEnded) {
+    const fallback = {
+      event: "error",
+      message: "Agent stream ended without a result",
+    };
+    res.write(`data: ${JSON.stringify(fallback)}\n\n`);
+    return { success: false, error: fallback.message, stepCount, duration: null, videoPath: null, actionTrace };
+  }
+
   return { success: finalSuccess, error: finalError, stepCount, duration: finalDuration, videoPath: finalVideoPath, actionTrace };
 }
 

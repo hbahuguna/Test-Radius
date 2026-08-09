@@ -66,6 +66,7 @@ VIDEO_CLEANUP_INTERVAL_SECONDS = int(os.getenv("BROWSER_VIDEO_CLEANUP_INTERVAL_S
 VIDEO_WIDTH = int(os.getenv("BROWSER_VIDEO_WIDTH", "1280"))
 VIDEO_HEIGHT = int(os.getenv("BROWSER_VIDEO_HEIGHT", "720"))
 VIDEO_FRAMERATE = int(os.getenv("BROWSER_VIDEO_FPS", "30"))
+VIDEO_FINALIZE_TIMEOUT_SECONDS = int(os.getenv("BROWSER_VIDEO_FINALIZE_TIMEOUT", "15"))
 
 if VIDEO_TTL_SECONDS <= 0 or VIDEO_CLEANUP_INTERVAL_SECONDS <= 0:
     raise ValueError("BROWSER_VIDEO_TTL_SECONDS and BROWSER_VIDEO_CLEANUP_INTERVAL_SECONDS must be positive")
@@ -195,6 +196,23 @@ async def finalize_video(run_id: str, browser: Optional[Browser]) -> Optional[Pa
         state.video_paths[run_id] = resolved
         state.runs.setdefault(run_id, {})["video_path"] = str(resolved)
         return resolved
+    except Exception as exc:
+        logger.warning("Video finalization failed for %s: %s", run_id, exc)
+        return None
+
+
+async def finalize_video_safe(run_id: str, browser: Optional[Browser]) -> Optional[Path]:
+    """Finalize the run video but never block the run/stream past a hard cap.
+
+    A stuck mp4 encoder (run_in_executor ffmpeg save) must not stall the run task:
+    when it does, the `/run/{id}/stream` endpoint keepalives forever and the UI
+    appears frozen at the last step even though the agent already finished.
+    """
+    try:
+        return await asyncio.wait_for(finalize_video(run_id, browser), timeout=VIDEO_FINALIZE_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        logger.warning("Video finalization timed out after %ss for %s", VIDEO_FINALIZE_TIMEOUT_SECONDS, run_id)
+        return None
     except Exception as exc:
         logger.warning("Video finalization failed for %s: %s", run_id, exc)
         return None
@@ -544,8 +562,6 @@ async def run_agent_task(run_id: str, request: RunRequest):
             final_result = history.final_result() if hasattr(history, 'final_result') else None
             logger.info(f"Done callback called: success={success}, result={final_result}")
 
-            video_path = await finalize_video(run_id, browser)
-
             all_steps = state.get_step_events(run_id)
             aggregated_trace: List[Dict[str, Any]] = []
             for step_event in all_steps:
@@ -564,10 +580,12 @@ async def run_agent_task(run_id: str, request: RunRequest):
                 "success": success,
                 "message": final_result or "Task completed",
                 "duration": history.total_duration_seconds() if hasattr(history, 'total_duration_seconds') else 0,
-                "video_path": f"/run/{run_id}/video" if video_path else None,
+                "video_path": None,
                 "action_trace": aggregated_trace,
             }
 
+            # Deliver the done event FIRST so the stream/UI always completes when
+            # the agent is done — video finalization below must not gate it.
             state.add_step_event(run_id, event)
 
             if run_id in state.chat_queues:
@@ -575,6 +593,12 @@ async def run_agent_task(run_id: str, request: RunRequest):
                     state.chat_queues[run_id].put_nowait(event)
                 except asyncio.QueueFull:
                     pass
+
+            # Best-effort video finalization, time-boxed so a stuck encoder cannot
+            # leave the run task waiting (which freezes the stream at the last step).
+            video_path = await finalize_video_safe(run_id, browser)
+            if video_path:
+                event["video_path"] = f"/run/{run_id}/video"
 
         async def on_initial_screenshot(screenshot_b64: str):
             """Called right after browser navigates to URL (~2-3s)."""
@@ -686,7 +710,7 @@ async def run_agent_task(run_id: str, request: RunRequest):
             state.runs[run_id]["status"] = "failed"
             state.runs[run_id]["error"] = str(e)
 
-            video_path = await finalize_video(run_id, browser)
+            video_path = await finalize_video_safe(run_id, browser)
 
             # Capture DOM snapshot for failure bundle
             try:
@@ -728,7 +752,7 @@ async def run_agent_task(run_id: str, request: RunRequest):
         state.runs[run_id]["status"] = "failed"
         state.runs[run_id]["error"] = str(e)
 
-        video_path = await finalize_video(run_id, browser if "browser" in locals() else None)
+        video_path = await finalize_video_safe(run_id, browser if "browser" in locals() else None)
 
         # Build failure bundle (browser may not be available at this level)
         root_cause = extract_root_cause(e)
@@ -757,7 +781,7 @@ async def run_agent_task(run_id: str, request: RunRequest):
                 pass
 
     finally:
-        await finalize_video(run_id, browser if "browser" in locals() else None)
+        await finalize_video_safe(run_id, browser if "browser" in locals() else None)
         if run_id in state.tasks:
             del state.tasks[run_id]
 
@@ -985,7 +1009,7 @@ async def get_video(
 
     video_path = state.video_paths.get(run_id)
     if video_path is None:
-        await finalize_video(run_id, state.browsers.get(run_id))
+        await finalize_video_safe(run_id, state.browsers.get(run_id))
         video_path = state.video_paths.get(run_id)
 
     if video_path is None or not video_path.is_file():
