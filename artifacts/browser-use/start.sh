@@ -13,9 +13,18 @@ export PATH="$PYTHON_BIN:$PATH"
 echo "Installing dependencies..."
 uv pip install --quiet fastapi uvicorn pydantic python-dotenv langchain-openai langchain-anthropic 'playwright==1.55.0' psutil pydantic-settings pyotp pillow zstandard aiohttp anyio httpx google-genai anthropic groq ollama google-api-python-client google-auth google-auth-oauthlib mcp pypdf reportlab cloudpickle markdownify python-docx bubus cdp-use rich posthog
 
-# Install playwright browsers
-echo "Installing Playwright browsers..."
-python3 -m playwright install chromium 2>/dev/null || true
+# Skip playwright browser download — use the system Chromium installed via Nix (pkgs.chromium).
+# This avoids the ~3-minute cold-start download on every new instance.
+# server.py reads BROWSER_USE_EXECUTABLE_PATH to use a custom binary.
+SYSTEM_CHROMIUM=$(which chromium 2>/dev/null || echo "")
+if [ -n "$SYSTEM_CHROMIUM" ]; then
+    export BROWSER_USE_EXECUTABLE_PATH="$SYSTEM_CHROMIUM"
+    echo "Using system Chromium: $SYSTEM_CHROMIUM"
+else
+    # Fallback: download Playwright Chromium if system one is missing
+    echo "System Chromium not found, downloading via Playwright..."
+    python3 -m playwright install chromium 2>/dev/null || true
+fi
 
 # Create .env file if it doesn't exist
 if [ ! -f .env ]; then

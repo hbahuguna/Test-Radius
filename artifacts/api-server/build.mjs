@@ -104,7 +104,6 @@ async function buildAll() {
       "puppeteer",
       "puppeteer-core",
       "electron",
-      "@workspace/nlp-runner",
     ],
     sourcemap: "linked",
     plugins: [
