@@ -14,6 +14,7 @@ import {
   OpenAIChatClient,
   BrowserSession,
   LiveAgent,
+  ChromeLaunchError,
   type ReplayEvent,
   type BrowseAgentEvent,
   type Page,
@@ -23,6 +24,9 @@ import {
   type TestSource,
   type RecordedStep,
 } from "@workspace/nlp-runner";
+
+const CHROME_WARMING_UP_MSG =
+  "Chrome is still downloading on this server (first cold start takes ~3 minutes). Please wait a moment and try again.";
 import { ShadowRecorder, type BrowserUseStepEvent } from "../lib/browser-use-recorder.js";
 import type { BrowserAgentEvent, BrowserAgentStepEvent, BrowserAgentDoneEvent, BrowserAgentErrorEvent } from "../lib/browser-use-client.js";
 
@@ -469,7 +473,8 @@ router.post("/record", async (req: Request, res: Response) => {
     }
   } catch (err) {
     logger.error({ err }, "queryfirst: record failed");
-    sseWrite(res, { event: "error", message: err instanceof Error ? err.message : String(err) });
+    const msg = err instanceof ChromeLaunchError ? CHROME_WARMING_UP_MSG : (err instanceof Error ? err.message : String(err));
+    sseWrite(res, { event: "error", message: msg });
   } finally {
     try { if (recorder) await recorder.close(); } catch { /* */ }
     try { if (browserSession) await browserSession.close(); } catch { /* */ }
@@ -707,7 +712,8 @@ router.post("/replay", async (req: Request, res: Response) => {
     await sleep(1000);
   } catch (err) {
     logger.error({ err }, "queryfirst: replay failed");
-    sseWrite(res, { event: "error", message: err instanceof Error ? err.message : String(err) });
+    const msg = err instanceof ChromeLaunchError ? CHROME_WARMING_UP_MSG : (err instanceof Error ? err.message : String(err));
+    sseWrite(res, { event: "error", message: msg });
   } finally {
     try { if (browserSession) await browserSession.close(); } catch { /* */ }
     active.session = null;
@@ -789,7 +795,8 @@ router.post("/browse", async (req: Request, res: Response) => {
     });
   } catch (err) {
     logger.error({ err }, "queryfirst: browse failed");
-    sseWrite(res, { event: "error", message: err instanceof Error ? err.message : String(err) });
+    const msg = err instanceof ChromeLaunchError ? CHROME_WARMING_UP_MSG : (err instanceof Error ? err.message : String(err));
+    sseWrite(res, { event: "error", message: msg });
   } finally {
     try { if (browserSession) await browserSession.close(); } catch { /* */ }
     active.session = null;

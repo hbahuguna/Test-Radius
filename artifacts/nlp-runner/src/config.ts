@@ -52,20 +52,43 @@ export function listVersionDirs(root: string, prefix = ""): string[] {
 
 function cachedChromeCandidates(home = homedir()): string[] {
   const candidates: string[] = [];
-  for (const root of [
+
+  // Collect all roots to search for ms-playwright caches.
+  // Playwright may install relative to HOME, but on Replit the workspace is
+  // /home/runner/workspace while HOME=/home/runner — so we check both.
+  const msPlaywrightRoots = new Set<string>([
     join(home, "Library", "Caches", "ms-playwright"),
     join(home, ".cache", "ms-playwright"),
     join(home, "AppData", "Local", "ms-playwright"),
-  ]) {
+  ]);
+  // Also check $HOME env var in case os.homedir() differs, and the workspace dir.
+  const envHome = process.env["HOME"];
+  if (envHome && envHome !== home) {
+    msPlaywrightRoots.add(join(envHome, ".cache", "ms-playwright"));
+  }
+  // Replit workspace-relative cache (common when playwright ran from within the workspace).
+  const cwd = process.cwd();
+  msPlaywrightRoots.add(join(cwd, ".cache", "ms-playwright"));
+  // Explicit workspace path for Replit Cloud Run.
+  msPlaywrightRoots.add("/home/runner/workspace/.cache/ms-playwright");
+
+  for (const root of msPlaywrightRoots) {
     for (const dir of listVersionDirs(root, "chromium-")) {
       candidates.push(
+        // macOS
         join(dir, "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium"),
+        // Linux (older playwright naming)
         join(dir, "chrome-linux", "chrome"),
+        // Linux (newer playwright naming, e.g. chromium-1223)
+        join(dir, "chrome-linux64", "chrome"),
+        // Headless shell variants
         join(dir, "chrome-headless-shell-mac", "chrome-headless-shell", "chrome-headless-shell"),
         join(dir, "chrome-headless-shell-linux", "chrome-headless-shell"),
+        join(dir, "chrome-headless-shell-linux64", "chrome-headless-shell"),
       );
     }
   }
+
   for (const root of [
     join(home, ".cache", "puppeteer", "chrome"),
     join(home, "AppData", "Local", "puppeteer", "cache", "chrome"),
@@ -74,6 +97,7 @@ function cachedChromeCandidates(home = homedir()): string[] {
       candidates.push(
         join(dir, "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium"),
         join(dir, "chrome-linux", "chrome"),
+        join(dir, "chrome-linux64", "chrome"),
         join(dir, "chrome-win", "chrome.exe"),
       );
     }
