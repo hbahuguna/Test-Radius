@@ -28,6 +28,7 @@ export type { ReplayOptions, ReplayResult, ReplayStepResult } from "./replay/eng
 export { LLMStepHealer, HealError } from "./replay/heal.js";
 export type { StepHealer, HealResult } from "./replay/heal.js";
 export { main as cliMain, parseRunArgs, resolveRunTarget, parseBrowseArgs, runBrowse } from "./cli.js";
+export { stepToEnglish, describeLocator, renderChecklist } from "./util/describe.js";
 export { resolveChromePath } from "./browser/launch.js";
 export type { RunCommandArgs, BrowseCommandArgs, BrowseEvent } from "./cli.js";
 export type {

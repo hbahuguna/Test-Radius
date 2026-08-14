@@ -14,6 +14,10 @@ export interface QfTestStep {
   action: string;
   selector: string | null;
   value: string | null;
+  /** Human-readable label produced by stepToEnglish server-side */
+  intent: string;
+  /** True for cookie/consent steps that are automatically skipped on replay when absent */
+  optional: boolean;
 }
 
 export interface QfSlot {
@@ -98,6 +102,16 @@ export async function listRuns(testId: number): Promise<{ runs: QfRun[] }> {
 
 export async function deleteTest(id: number): Promise<{ ok: boolean }> {
   return authedFetch<{ ok: boolean }>(`/tests/${id}`, { method: "DELETE" });
+}
+
+export async function deleteStep(
+  testId: number,
+  stepId: number,
+): Promise<{ ok: boolean; steps: QfTestStep[] }> {
+  return authedFetch<{ ok: boolean; steps: QfTestStep[] }>(
+    `/tests/${testId}/steps/${stepId}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function getScreenshot(): Promise<{ screenshot: string | null }> {

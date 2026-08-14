@@ -15,6 +15,7 @@ import {
   listTests,
   listRuns,
   deleteTest,
+  deleteStep,
   getScreenshot,
   type QfTest,
   type QfRun,
@@ -32,6 +33,8 @@ import {
   RotateCcw,
   Wrench,
   Globe,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 
 type Mode = "idle" | "recording" | "replaying" | "browsing";
@@ -74,6 +77,7 @@ export function QueryFirstDemo() {
   const [testsLoading, setTestsLoading] = useState(true);
   const [selectedTest, setSelectedTest] = useState<number | null>(null);
   const [runs, setRuns] = useState<QfRun[]>([]);
+  const [stepsOpen, setStepsOpen] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const screenshotTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -116,6 +120,7 @@ export function QueryFirstDemo() {
 
   // Load runs when a test is selected
   useEffect(() => {
+    setStepsOpen(false);
     if (selectedTest === null) { setRuns([]); return; }
     listRuns(selectedTest).then((r) => setRuns(r.runs)).catch(() => setRuns([]));
   }, [selectedTest]);
@@ -345,9 +350,41 @@ export function QueryFirstDemo() {
     }
   };
 
+  const handleDeleteStep = async (testId: number, stepId: number) => {
+    try {
+      const result = await deleteStep(testId, stepId);
+      setTests((prev) =>
+        prev.map((t) =>
+          t.id === testId
+            ? { ...t, steps: result.steps, stepCount: result.steps.length }
+            : t,
+        ),
+      );
+      toast.success("Step removed");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove step");
+    }
+  };
+
   const running = mode !== "idle";
   const isRecording = mode === "recording";
   const isBrowsing = mode === "browsing";
+
+  /** Colour class for the action type badge in the steps panel */
+  const actionBadgeClass = (action: string) => {
+    const map: Record<string, string> = {
+      navigate: "bg-blue-500/10 text-blue-500",
+      click: "bg-indigo-500/10 text-indigo-500",
+      fill: "bg-green-600/10 text-green-600",
+      select: "bg-amber-600/10 text-amber-600",
+      scroll: "bg-slate-500/10 text-slate-500",
+      assert: "bg-purple-500/10 text-purple-500",
+      extract: "bg-teal-500/10 text-teal-500",
+      wait: "bg-orange-500/10 text-orange-500",
+      go_back: "bg-rose-500/10 text-rose-500",
+    };
+    return map[action] ?? "bg-zinc-500/10 text-zinc-500";
+  };
 
   const quickSeeds = [
     { label: "Signup flow", query: "register a user on the signup page", url: "http://localhost:3123/signup" },
@@ -476,6 +513,60 @@ export function QueryFirstDemo() {
                     </div>
                   )}
                 </div>
+                {/* Collapsible steps panel — shown when a test is selected */}
+                {selectedTest !== null && (() => {
+                  const selTest = tests.find((t) => t.id === selectedTest);
+                  if (!selTest || selTest.steps.length === 0) return null;
+                  return (
+                    <div>
+                      <button
+                        type="button"
+                        className="w-full flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground py-0.5 transition-colors"
+                        onClick={() => setStepsOpen((o) => !o)}
+                      >
+                        {stepsOpen
+                          ? <ChevronDown className="size-3 shrink-0" />
+                          : <ChevronRight className="size-3 shrink-0" />}
+                        <span>Steps ({selTest.stepCount})</span>
+                      </button>
+                      {stepsOpen && (
+                        <div className="mt-1 space-y-0.5 max-h-52 overflow-y-auto rounded border bg-muted/20 p-1">
+                          {selTest.steps.map((step) => (
+                            <div
+                              key={step.id}
+                              className="group flex items-center gap-1.5 px-1.5 py-1 rounded text-xs hover:bg-muted/60 transition-colors"
+                            >
+                              <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-medium leading-none ${actionBadgeClass(step.action)}`}>
+                                {step.action}
+                              </span>
+                              <span className="flex-1 truncate text-foreground/80" title={step.intent}>
+                                {step.intent}
+                              </span>
+                              {step.optional && (
+                                <span className="shrink-0 rounded px-1 py-0.5 text-[10px] bg-zinc-500/10 text-zinc-400 leading-none">
+                                  skippable
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                disabled={selTest.stepCount <= 1 || running}
+                                onClick={() => handleDeleteStep(selTest.id, step.id)}
+                                title={selTest.stepCount <= 1 ? "Cannot delete the last step" : "Delete this step"}
+                                className={`shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground ${
+                                  selTest.stepCount <= 1 || running
+                                    ? "cursor-not-allowed opacity-20 group-hover:opacity-20"
+                                    : "hover:text-red-500"
+                                }`}
+                              >
+                                <Trash2 className="size-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
                   <input type="checkbox" checked={redesign} onChange={(e) => setRedesign(e.target.checked)} disabled={running} />
                   <Wrench className="size-3.5" />

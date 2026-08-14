@@ -15,6 +15,7 @@ import {
   BrowserSession,
   LiveAgent,
   ChromeLaunchError,
+  stepToEnglish,
   type ReplayEvent,
   type BrowseAgentEvent,
   type Page,
@@ -173,12 +174,14 @@ router.get("/tests", async (_req: Request, res: Response) => {
         query: t.query,
         entryUrl: t.entryUrl,
         stepCount: steps.length,
-        steps: steps.map((s: { id: number; idx: number; action: string; selector: string | null; value: string | null }) => ({
+        steps: steps.map((s) => ({
           id: s.id,
           idx: s.idx,
           action: s.action,
           selector: s.selector,
           value: s.value,
+          optional: s.optional ?? false,
+          intent: stepToEnglish(s),
         })),
         slots: slots.map((s: { name: string; kind: string; defaultValue: string | null }) => ({
           name: s.name,
@@ -235,6 +238,46 @@ router.delete("/tests/:id", async (req: Request, res: Response) => {
   } catch (err) {
     logger.error({ err }, "queryfirst: delete test failed");
     res.status(500).json({ error: "internal_error", message: "Failed to delete test" });
+  }
+});
+
+// DELETE /queryfirst/tests/:testId/steps/:stepId — remove one recorded step
+router.delete("/tests/:testId/steps/:stepId", async (req: Request, res: Response) => {
+  try {
+    const testId = Number(req.params.testId);
+    const stepId = Number(req.params.stepId);
+    if (!Number.isInteger(testId) || !Number.isInteger(stepId)) {
+      res.status(400).json({ error: "invalid_params", message: "testId and stepId must be integers" });
+      return;
+    }
+    const store = getStore();
+    const step = store.getStep(stepId);
+    if (!step || step.testId !== testId) {
+      res.status(404).json({ error: "step_not_found", message: "Step not found on this test" });
+      return;
+    }
+    const existing = store.listStepsByTest(testId);
+    if (existing.length <= 1) {
+      res.status(400).json({ error: "cannot_delete_last_step", message: "Cannot delete the last step of a test" });
+      return;
+    }
+    store.deleteStep(stepId);
+    const updated = store.listStepsByTest(testId);
+    res.json({
+      ok: true,
+      steps: updated.map((s) => ({
+        id: s.id,
+        idx: s.idx,
+        action: s.action,
+        selector: s.selector,
+        value: s.value,
+        optional: s.optional ?? false,
+        intent: stepToEnglish(s),
+      })),
+    });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: delete step failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to delete step" });
   }
 });
 

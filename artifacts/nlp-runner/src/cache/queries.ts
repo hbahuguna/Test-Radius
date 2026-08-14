@@ -328,6 +328,22 @@ export class DataStore {
     return rows.map(mapStep);
   }
 
+  /**
+   * Delete a single step and renumber the remaining steps so idx stays
+   * contiguous (0, 1, 2, …). Safe to call inside a transaction or standalone.
+   */
+  deleteStep(stepId: number): void {
+    const step = this.getStep(stepId);
+    if (!step) return;
+    this.db.transaction(() => {
+      this.db.prepare(`DELETE FROM steps WHERE id = ?`).run(stepId);
+      // Decrement idx for every step that came after the deleted one
+      this.db
+        .prepare(`UPDATE steps SET idx = idx - 1 WHERE test_id = ? AND idx > ?`)
+        .run(step.testId, step.idx);
+    })();
+  }
+
   deleteStepsByTest(testId: number): void {
     this.db.prepare(`DELETE FROM steps WHERE test_id = ?`).run(testId);
   }
