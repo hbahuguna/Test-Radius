@@ -36,11 +36,15 @@ export function resolveElement(
     selector: string;
   } | null = null;
 
+  // Interactive elements eligible for text-based matching. Kept broad so tabs,
+  // menu items, and custom roles are found in addition to plain links/buttons.
+  const TEXT_SEARCH_SEL = 'button,a,summary,[role="tab"],[role="button"],[role="link"],[role="menuitem"],[role="option"],li';
+
   for (const loc of locators) {
     let el: Element | null = null;
     if (loc.startsWith('text="')) {
       const needle = loc.slice(6, -1);
-      const all = document.querySelectorAll("button,a,summary");
+      const all = document.querySelectorAll(TEXT_SEARCH_SEL);
       for (let i = 0; i < all.length; i++) {
         if ((all[i].textContent ?? "").trim() === needle) {
           el = all[i];
@@ -56,30 +60,11 @@ export function resolveElement(
     }
     if (!el) continue;
 
-    // Build the replay selector: text locators are rewritten to a structural
-    // CSS path (`html > body > main:nth-child(2) > …`) since querySelector
-    // cannot match by text.
-    let selector = loc;
-    if (loc.startsWith('text="')) {
-      let sel = "";
-      let n: Element | null = el;
-      while (n && n.nodeType === 1) {
-        const p: Element | null = n.parentElement;
-        let nth = 1;
-        if (p) {
-          const kids = p.children;
-          for (let i = 0; i < kids.length; i++) {
-            if (kids[i] === n) {
-              nth = i + 1;
-              break;
-            }
-          }
-        }
-        sel = `${n.localName}:nth-child(${nth})` + (sel ? ` > ${sel}` : "");
-        n = p;
-      }
-      selector = sel;
-    }
+    // For text locators, keep the `text="..."` form as the replay selector.
+    // session.ts understands this format natively and resolves it at click-time,
+    // which avoids the race condition caused by converting to a brittle nth-child
+    // path here (in evaluate A) and then querying that path in evaluate B.
+    const selector = loc;
 
     // Fingerprint source: `localName|sorted-attrs|ancestor-path`, then FNV-1a.
     const attrs: string[] = [];

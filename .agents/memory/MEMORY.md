@@ -1,3 +1,4 @@
 - [TestRadius env setup](testradius-env-setup.md) — four env vars must be set for api-server to function; SUPABASE_URL is the critical one for JWKS auth.
 - [TestRadius DB bootstrap](testradius-db-bootstrap.md) — DB starts empty; schema must be pushed with `pnpm --filter @workspace/db run push` before any API calls work.
 - [Playwright Chromium on Replit](playwright-replit.md) — Playwright Chromium needs system deps + no-sandbox flags; use system binary via env var.
+- [QueryFirst selector strategy](queryfirst-selector-strategy.md) — text="..." locators must stay as-is through the replay pipeline; converting to nth-child in evaluate A then querying it in evaluate B causes race-condition failures.

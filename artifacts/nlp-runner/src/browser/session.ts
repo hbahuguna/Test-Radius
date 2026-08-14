@@ -301,7 +301,17 @@ export class Page {
       height: number;
     }>(
       (sel: string) => {
-        const el = document.querySelector(sel);
+        let el: Element | null;
+        if (sel.startsWith('text="')) {
+          const needle = sel.slice(6, -1);
+          const all = document.querySelectorAll('button,a,summary,[role="tab"],[role="button"],[role="link"],[role="menuitem"],[role="option"],li');
+          el = null;
+          for (let i = 0; i < all.length; i++) {
+            if ((all[i].textContent ?? "").trim() === needle) { el = all[i]; break; }
+          }
+        } else {
+          try { el = document.querySelector(sel); } catch { el = null; }
+        }
         if (!el) return { found: false, left: 0, top: 0, width: 0, height: 0 };
         const r = el.getBoundingClientRect();
         return {
@@ -366,8 +376,18 @@ export class Page {
     block: ScrollLogicalPosition = "center",
   ): Promise<void> {
     await this.evaluate((sel: string, b: ScrollLogicalPosition) => {
-      const el = document.querySelector(sel) as HTMLElement | null;
-      if (el) el.scrollIntoView({ behavior: "instant", block: b, inline: "center" });
+      let el: Element | null;
+      if (sel.startsWith('text="')) {
+        const needle = sel.slice(6, -1);
+        const all = document.querySelectorAll('button,a,summary,[role="tab"],[role="button"],[role="link"],[role="menuitem"],[role="option"],li');
+        el = null;
+        for (let i = 0; i < all.length; i++) {
+          if ((all[i].textContent ?? "").trim() === needle) { el = all[i]; break; }
+        }
+      } else {
+        try { el = document.querySelector(sel); } catch { el = null; }
+      }
+      if (el) (el as HTMLElement).scrollIntoView({ behavior: "instant", block: b, inline: "center" });
     }, selector, block);
   }
 
@@ -379,13 +399,18 @@ export class Page {
   async fill(selector: string, text: string): Promise<void> {
     await this.scrollIntoView(selector);
     await this.evaluate((sel: string) => {
-      const el = document.querySelector(sel) as
-        | HTMLInputElement
-        | HTMLTextAreaElement
-        | null;
-      if (!el) {
-        throw new Error(`fill: no element matches selector "${sel}"`);
+      let el: HTMLInputElement | HTMLTextAreaElement | null;
+      if (sel.startsWith('text="')) {
+        const needle = sel.slice(6, -1);
+        const all = document.querySelectorAll('button,a,summary,[role="tab"],[role="button"],[role="link"],[role="menuitem"],[role="option"],input,textarea');
+        el = null;
+        for (let i = 0; i < all.length; i++) {
+          if ((all[i].textContent ?? "").trim() === needle) { el = all[i] as HTMLInputElement; break; }
+        }
+      } else {
+        try { el = document.querySelector(sel) as HTMLInputElement | HTMLTextAreaElement | null; } catch { el = null; }
       }
+      if (!el) throw new Error(`fill: no element matches selector "${sel}"`);
       el.focus();
       el.select();
     }, selector);
@@ -399,10 +424,18 @@ export class Page {
   async select(selector: string, value: string): Promise<void> {
     await this.scrollIntoView(selector);
     await this.evaluate((sel: string, val: string) => {
-      const el = document.querySelector(sel) as HTMLSelectElement | null;
-      if (!el) {
-        throw new Error(`select: no element matches selector "${sel}"`);
+      let el: HTMLSelectElement | null;
+      if (sel.startsWith('text="')) {
+        const needle = sel.slice(6, -1);
+        const all = document.querySelectorAll("select");
+        el = null;
+        for (let i = 0; i < all.length; i++) {
+          if ((all[i].textContent ?? "").trim() === needle) { el = all[i] as HTMLSelectElement; break; }
+        }
+      } else {
+        try { el = document.querySelector(sel) as HTMLSelectElement | null; } catch { el = null; }
       }
+      if (!el) throw new Error(`select: no element matches selector "${sel}"`);
       el.value = val;
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
