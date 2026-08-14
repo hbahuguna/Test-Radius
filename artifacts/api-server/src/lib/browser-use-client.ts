@@ -441,7 +441,16 @@ export interface BrowserAgentErrorEvent {
   video_url?: string | null;
 }
 
-export type BrowserAgentEvent = BrowserAgentStepEvent | BrowserAgentDoneEvent | BrowserAgentErrorEvent;
+export interface BrowserAgentLoadingEvent {
+  event: "loading";
+  step_number: number;
+  screenshot: string | null;
+  model_output: null;
+  url: string | null;
+  title: string | null;
+}
+
+export type BrowserAgentEvent = BrowserAgentStepEvent | BrowserAgentDoneEvent | BrowserAgentErrorEvent | BrowserAgentLoadingEvent;
 
 export interface BrowserAgentRunResult {
   run_id: string;
@@ -455,6 +464,7 @@ export interface BrowserAgentRunResult {
 
 export interface BrowserAgentStreamOptions {
   onTrace?: (trace: BrowserAgentActionTrace[]) => Promise<void> | void;
+  onRunId?: (pythonRunId: string) => Promise<void> | void;
 }
 
 let currentAgentRunId: string | null = null;
@@ -494,6 +504,10 @@ export async function startBrowserAgentRun(
     const runData = (await runResponse.json()) as RunResponse;
     currentAgentRunId = runData.run_id;
     logger.info({ run_id: runData.run_id }, "Browser-agent run started");
+
+    // Persist the python run id immediately (not after the stream ends) so the
+    // video endpoint can resolve it as soon as the done event reaches the client.
+    await options?.onRunId?.(runData.run_id);
 
     // Await streaming - blocks until agent finishes
     const streamResult = res ? await streamAgentEvents(runData.run_id, res, options) : undefined;
@@ -813,6 +827,21 @@ export async function stopBrowserAgentRun(): Promise<void> {
   } finally {
     currentAgentRunId = null;
   }
+}
+
+/**
+ * Resume streaming an existing browser-agent run (used for follow-up messages
+ * sent after the run completed). Relays the Python SSE stream to the client
+ * response and returns the terminal result of that follow-up execution.
+ */
+export async function followBrowserAgentRun(
+  runId: string,
+  res: Response,
+  options?: BrowserAgentStreamOptions,
+): Promise<BrowserAgentRunResult> {
+  logger.info({ run_id: runId }, "Following browser-agent run for follow-up stream");
+  const { success, error, stepCount, duration, videoPath, actionTrace } = await streamAgentEvents(runId, res, options);
+  return { run_id: runId, success, error, stepCount, duration, videoPath, actionTrace };
 }
 
 export async function stopBrowserAgentRunWithId(runId: string): Promise<void> {

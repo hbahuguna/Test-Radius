@@ -8,6 +8,7 @@ import { getOrCreateUser } from "../lib/auth";
 import {
   startBrowserAgentRun,
   sendBrowserAgentChat,
+  followBrowserAgentRun,
   stopBrowserAgentRun,
   stopBrowserAgentRunWithId,
   getBrowserAgentScreenshot,
@@ -147,6 +148,12 @@ router.post("/run", async (req: Request, res: Response) => {
         })
         .where(eq(agenticRunsTable.id, run.id));
     },
+    onRunId: async (pythonRunId) => {
+      await db
+        .update(agenticRunsTable)
+        .set({ pythonRunId })
+        .where(eq(agenticRunsTable.id, run.id));
+    },
   });
 
   if (result) {
@@ -226,6 +233,71 @@ router.post("/chat", async (req: Request, res: Response) => {
       error: "send_failed",
       message: "Failed to send message to agent",
     });
+  }
+});
+
+router.get("/run/:id/follow", async (req: Request, res: Response) => {
+  const user = (await getOrCreateUser(req.user!))!;
+  const [run] = await db
+    .select()
+    .from(agenticRunsTable)
+    .where(and(eq(agenticRunsTable.id, req.params.id as string), eq(agenticRunsTable.userId, user.id)))
+    .limit(1);
+
+  if (!run || !run.pythonRunId) {
+    res.status(404).json({ error: "run_not_found" });
+    return;
+  }
+
+  await db
+    .update(agenticRunsTable)
+    .set({ status: "running", error: null, completedAt: null })
+    .where(eq(agenticRunsTable.id, run.id));
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+
+  const result = await followBrowserAgentRun(run.pythonRunId, res, {
+    onTrace: async (actionTrace) => {
+      await db
+        .update(agenticRunsTable)
+        .set({
+          metadata: {
+            ...(run.metadata && typeof run.metadata === "object" ? run.metadata as Record<string, unknown> : {}),
+            traceVersion: 1,
+            actionTrace,
+          },
+        })
+        .where(eq(agenticRunsTable.id, run.id));
+    },
+  });
+
+  if (result.success != null) {
+    await db
+      .update(agenticRunsTable)
+      .set({
+        status: result.success ? "completed" : "failed",
+        success: result.success,
+        error: result.error,
+        stepCount: result.stepCount,
+        duration: result.duration,
+        videoUrl: result.videoPath ? `/api/browser-agent/run/${run.id}/video` : null,
+        completedAt: new Date(),
+        metadata: {
+          ...(run.metadata && typeof run.metadata === "object" ? run.metadata as Record<string, unknown> : {}),
+          traceVersion: 1,
+          actionTrace: result.actionTrace,
+        },
+      })
+      .where(eq(agenticRunsTable.id, run.id));
+  }
+
+  if (!res.writableEnded) {
+    res.end();
   }
 });
 

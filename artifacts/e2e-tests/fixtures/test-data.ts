@@ -8,6 +8,7 @@ export const BLOG_SLUGS = [
   "code-coverage-tia-article",
   "build-testradius-github-app",
   "sdet-model-journey",
+  "intelligent-test-execution",
 ] as const;
 
 export const ROUTES = {

@@ -191,6 +191,9 @@ class ChatOpenAI(BaseChatModel):
 				model_params.pop('temperature', None)
 				model_params.pop('frequency_penalty', None)
 
+			if self.base_url and "googleapis.com" in str(self.base_url).lower():
+				model_params.pop('frequency_penalty', None)
+
 			if output_format is None:
 				# Return string response
 				response = await self.get_client().chat.completions.create(

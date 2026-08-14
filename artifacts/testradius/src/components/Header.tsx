@@ -40,11 +40,18 @@ export function Header({ scrollToForm }: HeaderProps) {
             </Button>
           </Link>
           {session ? (
-            <Link href="/browser-agent">
-              <Button variant="ghost" className="hidden sm:inline-flex">
-                Agent
-              </Button>
-            </Link>
+            <>
+              <Link href="/queryfirst-demo">
+                <Button variant="ghost" className="hidden sm:inline-flex">
+                  QueryFirst
+                </Button>
+              </Link>
+              <Link href="/browser-agent">
+                <Button variant="ghost" className="hidden sm:inline-flex">
+                  Agent
+                </Button>
+              </Link>
+            </>
           ) : (
             <Button
               variant="ghost"

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign up — QueryFirst Fixture</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="card">
+      <h1>Create your account</h1>
+      <form id="signup-form">
+        <label for="signup-name">Name</label>
+        <input
+          id="signup-name"
+          type="text"
+          data-testid="signup-name"
+          name="name"
+          placeholder="Ada Lovelace"
+          required
+        />
+        <label for="signup-email">Email</label>
+        <input
+          id="signup-email"
+          type="email"
+          data-testid="signup-email"
+          name="email"
+          placeholder="you@example.com"
+          required
+        />
+        <label for="signup-password">Password</label>
+        <input
+          id="signup-password"
+          type="password"
+          data-testid="signup-password"
+          name="password"
+          placeholder="••••••••"
+          required
+        />
+        <button type="submit" data-testid="signup-submit">Create account</button>
+      </form>
+      <p id="signup-result" class="result" data-testid="signup-result" hidden></p>
+      <nav class="back"><a href="index.html">← Home</a></nav>
+    </main>
+    <script src="redesign.js"></script>
+    <script>
+      function showWelcome() {
+        const name = document.querySelector("#signup-name").value.trim() || "there";
+        const result = document.querySelector("#signup-result");
+        result.textContent = "Welcome, " + name + "!";
+        result.hidden = false;
+      }
+      document.querySelector("#signup-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        showWelcome();
+      });
+      document
+        .querySelector("#signup-form button[type=submit]")
+        .addEventListener("click", showWelcome);
+    </script>
+  </body>
+</html>

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dynamic — QueryFirst Fixture</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="card">
+      <h1>Dynamic content</h1>
+      <p data-testid="dynamic-status">Loading…</p>
+      <button
+        id="appears-late"
+        class="hidden"
+        data-testid="dynamic-appears"
+        type="button"
+      >
+        Click me (appears after 2s)
+      </button>
+      <p id="dynamic-clicked" class="result" data-testid="dynamic-clicked" hidden>
+        Button clicked!
+      </p>
+      <nav class="back"><a href="index.html">← Home</a></nav>
+    </main>
+    <script src="redesign.js"></script>
+    <script>
+      const status = document.querySelector('[data-testid="dynamic-status"]');
+      setTimeout(() => {
+        document.querySelector("#appears-late").classList.remove("hidden");
+        status.textContent = "Ready";
+      }, 2000);
+      document.querySelector("#appears-late").addEventListener("click", () => {
+        document.querySelector("#dynamic-clicked").hidden = false;
+      });
+    </script>
+  </body>
+</html>

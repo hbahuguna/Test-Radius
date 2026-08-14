@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pricing Waitlist — QueryFirst Fixture</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="card">
+      <h1>Pricing</h1>
+      <div class="plans">
+        <section class="plan" data-testid="plan-card">
+          <h2 data-testid="plan-name">Basic</h2>
+          <p class="price" data-testid="plan-price">$9/mo</p>
+          <p data-testid="plan-desc">For individuals</p>
+        </section>
+        <section class="plan" data-testid="plan-card">
+          <h2 data-testid="plan-name">Pro</h2>
+          <p class="price" data-testid="plan-price">$29/mo</p>
+          <p data-testid="plan-desc">For teams</p>
+        </section>
+        <section class="plan" data-testid="plan-card">
+          <h2 data-testid="plan-name">Enterprise</h2>
+          <p class="price" data-testid="plan-price">$99/mo</p>
+          <p data-testid="plan-desc">For orgs</p>
+        </section>
+      </div>
+      <h2>Join the waitlist</h2>
+      <form id="waitlist-form">
+        <label for="waitlist-email">Email</label>
+        <input
+          id="waitlist-email"
+          type="email"
+          data-testid="waitlist-email"
+          name="email"
+          placeholder="you@example.com"
+          required
+        />
+        <button type="submit" data-testid="waitlist-submit">Join waitlist</button>
+      </form>
+      <p id="waitlist-result" class="result" data-testid="waitlist-result" hidden></p>
+      <nav class="back"><a href="index.html">← Home</a></nav>
+    </main>
+    <script src="redesign.js"></script>
+    <script>
+      document.querySelector("#waitlist-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const result = document.querySelector("#waitlist-result");
+        result.textContent = "You're on the list!";
+        result.hidden = false;
+      });
+    </script>
+  </body>
+</html>

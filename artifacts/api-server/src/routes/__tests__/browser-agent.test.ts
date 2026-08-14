@@ -41,6 +41,7 @@ vi.mock("@workspace/db/schema", () => ({
 const mockStartBrowserAgentRun = vi.fn();
 const mockProxyBrowserAgentVideo = vi.fn();
 const mockGetBrowserAgentRunSteps = vi.fn();
+const mockFollowBrowserAgentRun = vi.fn();
 const mockStartCodeRun = vi.fn();
 const mockIsWorkerAvailable = vi.fn();
 const mockStopCodeRun = vi.fn();
@@ -52,6 +53,7 @@ vi.mock("../../lib/browser-use-client", () => ({
   getBrowserAgentRunStatus: vi.fn(),
   proxyBrowserAgentVideo: mockProxyBrowserAgentVideo,
   getBrowserAgentRunSteps: mockGetBrowserAgentRunSteps,
+  followBrowserAgentRun: mockFollowBrowserAgentRun,
 }));
 
 vi.mock("../../lib/code-runner", () => ({
@@ -94,6 +96,7 @@ function createMockRes(): any {
   res.setHeader = vi.fn().mockReturnValue(res);
   res.set = vi.fn().mockReturnValue(res);
   res.write = vi.fn().mockReturnValue(true);
+  res.writeHead = vi.fn().mockReturnValue(res);
   res.headersSent = false;
   res.writableEnded = false;
   return res;
@@ -113,6 +116,14 @@ describe("browser-agent routes", () => {
     mockUpdateSet.mockReturnValue({ where: mockUpdateWhere });
     mockUpdateWhere.mockResolvedValue(undefined);
     mockProxyBrowserAgentVideo.mockResolvedValue(200);
+    mockFollowBrowserAgentRun.mockResolvedValue({
+      run_id: "py-1",
+      success: true,
+      stepCount: 3,
+      duration: 5,
+      videoPath: "/run/py-1/video",
+      actionTrace: [],
+    });
     mockGetBrowserAgentRunSteps.mockResolvedValue([]);
     mockIsWorkerAvailable.mockReturnValue(true);
     mockStartCodeRun.mockReturnValue("code-run-123");
@@ -401,6 +412,60 @@ describe("browser-agent routes", () => {
       );
 
       expect(mockProxyBrowserAgentVideo).toHaveBeenCalledWith("py-1", response);
+    });
+  });
+
+  describe("GET /run/:id/follow", () => {
+    it("authorizes the run owner, marks it running, and relays the follow-up stream", async () => {
+      mockSelectChain.limit.mockResolvedValueOnce([{
+        id: "db-run-456",
+        userId: "test-user",
+        pythonRunId: "py-1",
+        metadata: {},
+      }]);
+
+      const route = router.stack.find(
+        (l: any) => l.route && l.route.path === "/run/:id/follow" && l.route.methods?.get,
+      );
+      if (!route) throw new Error("GET /run/:id/follow route not found");
+
+      const response = createMockRes();
+
+      await route.route.stack[0].handle(
+        createMockReq({ method: "GET", params: { id: "db-run-456" } }),
+        response,
+        () => {},
+      );
+
+      expect(mockUpdateSet).toHaveBeenCalledWith(expect.objectContaining({ status: "running" }));
+      expect(mockFollowBrowserAgentRun).toHaveBeenCalledWith(
+        "py-1",
+        response,
+        expect.objectContaining({ onTrace: expect.any(Function) }),
+      );
+    });
+
+    it("returns 404 when the run has no pythonRunId", async () => {
+      mockSelectChain.limit.mockResolvedValueOnce([{
+        id: "db-run-456",
+        userId: "test-user",
+        pythonRunId: null,
+      }]);
+      const response = createMockRes();
+
+      const route = router.stack.find(
+        (l: any) => l.route && l.route.path === "/run/:id/follow" && l.route.methods?.get,
+      );
+      if (!route) throw new Error("GET /run/:id/follow route not found");
+
+      await route.route.stack[0].handle(
+        createMockReq({ method: "GET", params: { id: "db-run-456" } }),
+        response,
+        () => {},
+      );
+
+      expect(response.status).toHaveBeenCalledWith(404);
+      expect(mockFollowBrowserAgentRun).not.toHaveBeenCalled();
     });
   });
 

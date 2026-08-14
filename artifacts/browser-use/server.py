@@ -13,6 +13,7 @@ import logging
 import json
 import base64
 import shutil
+import re
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -90,6 +91,10 @@ class RunRequest(BaseModel):
     model_provider: Optional[str] = Field(default=None, description="Model provider override")
     use_vision: bool = Field(default=False, description="Send screenshots to model (set false for text-only models)")
     keep_alive: bool = Field(default=True, description="Keep browser alive for follow-up")
+    cdp_url: Optional[str] = Field(default=None, description="CDP URL to connect to an existing browser instead of launching one (e.g. ws://127.0.0.1:9222)")
+    redact_values: bool = Field(default=True, description="Redact sensitive input values in action traces (set false for recording)")
+    api_key: Optional[str] = Field(default=None, description="Generic API key for any OpenAI-compatible provider")
+    base_url: Optional[str] = Field(default=None, description="Generic Base URL for any OpenAI-compatible provider")
 
 
 class ChatRequest(BaseModel):
@@ -100,6 +105,7 @@ class RunResponse(BaseModel):
     run_id: str
     status: str
     message: str
+    cdp_url: Optional[str] = None  # CDP WebSocket URL for shadow recorder
 
 
 class AgentStateManager:
@@ -270,26 +276,44 @@ def get_llm(
     poolside_api_key: Optional[str] = None,
     opencode_api_key: Optional[str] = None,
     model_provider: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
 ):
     from browser_use.llm import ChatOpenAI
 
+    # Generic base_url and api_key override
+    if base_url and api_key:
+        logger.info(f"get_llm: using custom base_url={base_url} and api_key={'SET' if api_key else 'None'}")
+        return ChatOpenAI(
+            model=model_id,
+            base_url=base_url,
+            api_key=api_key,
+            timeout=180,
+        )
+
+    # OpenCode Zen
     if model_provider == "opencode" or opencode_api_key:
         return ChatOpenAI(
             model=model_id.removeprefix("opencode/"),
             base_url=os.getenv("OPENCODE_BASE_URL", "https://opencode.ai/zen/v1"),
             api_key=opencode_api_key or os.getenv("OPENCODE_API_KEY", ""),
-            # OpenCode Zen currently rejects OpenAI's response_format=json_schema.
-            # Keep structured parsing locally while asking the model for JSON in the prompt.
             add_schema_to_system_prompt=True,
             dont_force_structured_output=True,
         )
 
+    # OpenRouter
+    if model_provider == "openrouter" or "openrouter" in model_id.lower():
+        return ChatOpenAI(
+            model=model_id,
+            base_url="https://openrouter.ai/api/v1",
+            api_key=OPENROUTER_API_KEY,
+        )
+
+    # Poolside
     api_key = poolside_api_key or POOLSIDE_API_KEY
     logger.info(f"get_llm: model_id={model_id}, poolside_api_key={'SET' if poolside_api_key else 'None'}, env_key={'SET' if POOLSIDE_API_KEY else 'EMPTY'}, resolved_key={'SET' if api_key else 'EMPTY'}")
 
     if api_key:
-        # If the caller passed the generic default model, pick a Poolside-
-        # compatible model instead.
         poolside_model = model_id
         if poolside_model in ('openai/gpt-4o', 'openai/gpt-4o-mini'):
             poolside_model = 'o4-mini'
@@ -297,27 +321,16 @@ def get_llm(
             model=poolside_model,
             base_url="https://inference.poolside.ai/v1",
             api_key=api_key,
-            max_completion_tokens=16384,  # Poolside is a thinking model - needs extra tokens
-            timeout=180,  # Poolside thinking model takes longer
+            max_completion_tokens=16384,
+            timeout=180,
             reasoning_models=[poolside_model, 'o4-mini', 'o3', 'o3-mini', 'o1', 'o1-pro', 'o3-pro', 'gpt-5', 'gpt-5-mini', 'gpt-5-nano'],
         )
-    elif "openrouter" in model_id.lower():
-        return ChatOpenAI(
-            model=model_id,
-            base_url="https://openrouter.ai/api/v1",
-            api_key=OPENROUTER_API_KEY,
-        )
-    elif model_id.startswith("anthropic/"):
-        from browser_use.llm import ChatAnthropic
-        return ChatAnthropic(
-            model=model_id.split("/")[-1],
-            api_key=os.getenv("ANTHROPIC_API_KEY", ""),
-        )
-    else:
-        return ChatOpenAI(
-            model=model_id,
-            api_key=os.getenv("OPENAI_API_KEY", "") or POOLSIDE_API_KEY,
-        )
+
+    # Fallback: OpenAI env or Poolside
+    return ChatOpenAI(
+        model=model_id,
+        api_key=os.getenv("OPENAI_API_KEY", "") or POOLSIDE_API_KEY,
+    )
 
 
 def format_action_name(action_model) -> str:
@@ -366,7 +379,12 @@ def format_model_output(output) -> Dict[str, Any]:
     return result
 
 
-def format_action_trace(model_output: Any, browser_state: Any) -> List[Dict[str, Any]]:
+def _snake_case(name: str) -> str:
+    """Convert a CamelCase class name to snake_case (ClickElementAction -> click_element)."""
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
+def format_action_trace(model_output: Any, browser_state: Any, redact_values: bool = True) -> List[Dict[str, Any]]:
     """Serialize model actions with the DOM elements Browser-use resolved."""
     if not model_output or not getattr(model_output, "action", None):
         return []
@@ -381,11 +399,30 @@ def format_action_trace(model_output: Any, browser_state: Any) -> List[Dict[str,
     trace: List[Dict[str, Any]] = []
     for index, action in enumerate(model_output.action):
         raw = action.model_dump(mode="json", exclude_none=True) if hasattr(action, "model_dump") else str(action)
-        action_name = action.__class__.__name__
-        if isinstance(raw, dict) and any(token in action_name.lower() for token in ("input", "type", "fill")):
+        # Browser-use 2.x builds every action as an instance of ONE dynamic
+        # union class whose __name__ is literally "ActionModel", so class-name
+        # snake_casing is useless. Each individual action model carries exactly
+        # one field named after the action (e.g. {"click": {...}}), so derive
+        # the name from the dump keys instead.
+        action_name = ""
+        if isinstance(raw, dict):
+            action_keys = [k for k in raw if k != "interacted_element"]
+            if len(action_keys) == 1:
+                action_name = action_keys[0]
+        if not action_name:
+            # Fallback for older browser-use versions whose action classes have
+            # distinct names (e.g. ClickElementAction -> click_element).
+            action_name = _snake_case(action.__class__.__name__)
+        if redact_values and isinstance(raw, dict) and any(token in action_name.lower() for token in ("input", "type", "fill")):
             raw = dict(raw)
-            for key in ("text", "value", "input"):
-                if key in raw:
+            for key, value in raw.items():
+                if isinstance(value, dict):
+                    value = dict(value)
+                    for k in ("text", "value", "input"):
+                        if k in value:
+                            value[k] = "{{TEST_VALUE}}"
+                    raw[key] = value
+                elif key in ("text", "value", "input"):
                     raw[key] = "{{TEST_VALUE}}"
         element = interacted[index].to_dict() if index < len(interacted) and interacted[index] else None
         if element and isinstance(element.get("attributes"), dict):
@@ -461,10 +498,12 @@ async def run_agent_task(run_id: str, request: RunRequest):
 
         task_text = f"{request.url}\n\nGoal: {request.goal}"
         llm = get_llm(
-            request.model_id,
-            request.poolside_api_key,
-            request.opencode_api_key,
-            request.model_provider,
+            model_id=request.model_id,
+            poolside_api_key=request.poolside_api_key,
+            opencode_api_key=request.opencode_api_key,
+            model_provider=request.model_provider,
+            api_key=request.api_key,
+            base_url=request.base_url,
         )
         logger.info(f"LLM created: {type(llm).__name__}")
 
@@ -484,15 +523,42 @@ async def run_agent_task(run_id: str, request: RunRequest):
             run_video_dir.mkdir(parents=True, exist_ok=True)
             state.video_dirs[run_id] = run_video_dir
 
-        browser_profile = BrowserProfile(
-            headless=True,
-            executable_path=playwright_candidate,
-            record_video_dir=run_video_dir if VIDEO_ENABLED else None,
-            record_video_size={"width": VIDEO_WIDTH, "height": VIDEO_HEIGHT} if VIDEO_ENABLED else None,
-            record_video_framerate=VIDEO_FRAMERATE,
-        )
+        # Create browser — either launch a new one or connect to an existing CDP url
+        playwright_candidate = os.getenv("BROWSER_USE_EXECUTABLE_PATH")
+        if not playwright_candidate:
+            try:
+                from playwright.async_api import async_playwright
+                async with async_playwright() as p:
+                    playwright_candidate = p.chromium.executable_path
+            except Exception as e:
+                logger.warning(f"Could not resolve Playwright Chromium path: {e}")
+        logger.info(f"Using browser executable: {playwright_candidate or 'browser-use default discovery'}")
+        run_video_dir = video_directory(run_id)
+        if VIDEO_ENABLED:
+            run_video_dir.mkdir(parents=True, exist_ok=True)
+            state.video_dirs[run_id] = run_video_dir
+
+        browser_profile_kwargs: dict = {
+            "headless": True,
+            "record_video_dir": run_video_dir if VIDEO_ENABLED else None,
+            "record_video_size": {"width": VIDEO_WIDTH, "height": VIDEO_HEIGHT} if VIDEO_ENABLED else None,
+            "record_video_framerate": VIDEO_FRAMERATE,
+        }
+        # If cdp_url is provided, connect to an existing browser instead of launching
+        if request.cdp_url:
+            browser_profile_kwargs["cdp_url"] = request.cdp_url
+            logger.info(f"Connecting to existing browser via CDP: {request.cdp_url}")
+        else:
+            browser_profile_kwargs["executable_path"] = playwright_candidate
+
+        browser_profile = BrowserProfile(**browser_profile_kwargs)
         browser = Browser(browser_profile=browser_profile)
         state.browsers[run_id] = browser
+        # Store the CDP HTTP URL for the shadow recorder to connect to
+        # browser_use sets browser_profile.cdp_url when launching or connecting;
+        # for launched browsers it's set to the ws URL after chrome starts.
+        # We expose the http base URL via GET /run/{run_id}/cdp-url
+        state.runs[run_id]["cdp_url"] = browser.cdp_url
 
         step_count = [0]
         last_screenshot = [None]
@@ -527,7 +593,7 @@ async def run_agent_task(run_id: str, request: RunRequest):
                 screenshot_b64 = None
 
             formatted_output = format_model_output(model_output)
-            action_trace = format_action_trace(model_output, browser_state)
+            action_trace = format_action_trace(model_output, browser_state, redact_values=request.redact_values)
 
             event = {
                 "event": "step",
@@ -833,6 +899,7 @@ async def start_run(
         "created_at": datetime.utcnow().isoformat(),
         "success": None,
         "error": None,
+        "request": request,
     }
 
     state.step_events[run_id] = []
@@ -845,6 +912,7 @@ async def start_run(
         run_id=run_id,
         status="pending",
         message="Run started",
+        cdp_url=request.cdp_url,  # Echo back; full CDP URL set after browser launch, query /run/{run_id}/cdp-url for updates
     )
 
 
@@ -888,6 +956,108 @@ async def stream_run(
     )
 
 
+async def follow_up_task(run_id: str) -> None:
+    """Re-run the same agent/agent object to execute a follow-up message.
+
+    Runs when a chat message arrives after the original run finished, so the
+    follow-up actually gets processed instead of just mutating the agent's task
+    history. The agent keeps keep_alive=True (browser/CDP stay alive), and the
+    still-registered step/done callbacks keep streaming events to the queue.
+    """
+    agent = state.agents.get(run_id)
+    browser = state.browsers.get(run_id)
+    req = state.runs.get(run_id, {}).get("request")
+    if agent is None or req is None:
+        logger.warning(f"Follow-up skipped for {run_id}: agent or request missing")
+        if run_id in state.tasks:
+            del state.tasks[run_id]
+        return
+
+    # The previous run already cached a final video path; clear it so the
+    # follow-up video is picked up when done_callback finalizes it again.
+    state.video_paths.pop(run_id, None)
+    state.runs[run_id]["status"] = "running"
+    state.runs[run_id]["error"] = None
+    logger.info(f"Follow-up run starting for {run_id} (max_steps={req.max_steps})")
+
+    try:
+        history = await agent.run(max_steps=req.max_steps)
+        success = history.is_successful() if hasattr(history, 'is_successful') else True
+        has_errors = history.has_errors() if hasattr(history, 'has_errors') else False
+        judgement = history.judgement() if hasattr(history, 'judgement') else None
+        judge_failed = judgement is not None and isinstance(judgement, dict) and not judgement.get("verdict", True)
+        logger.info(f"Follow-up run completed for {run_id}: success={success}, has_errors={has_errors}, judge_failed={judge_failed}")
+
+        state.runs[run_id]["success"] = success
+        if not success or has_errors or judge_failed:
+            history_errors = history.errors() if hasattr(history, 'errors') else []
+            first_error = next((e for e in history_errors if e is not None), None)
+            judge_reason = judgement.get("failure_reason", "") or judgement.get("reasoning", "") if isinstance(judgement, dict) else ""
+            error_msg = first_error or judge_reason or "Task failed: the agent was unable to complete the goal"
+            error_for_bundle = Exception(error_msg)
+            state.runs[run_id]["status"] = "failed"
+            state.runs[run_id]["error"] = str(error_for_bundle)
+
+            root_cause = extract_root_cause(error_for_bundle)
+            fix_suggestion = generate_fix_suggestion(root_cause)
+            failure_bundle = build_failure_bundle(
+                dom_snapshot=state.get_dom_snapshot(run_id),
+                screenshot=state.screenshots.get(run_id),
+                action_history=state.get_step_events(run_id),
+                root_cause=root_cause,
+                fix_suggestion=fix_suggestion,
+            )
+            state.set_failure_bundle(run_id, failure_bundle)
+
+            event = {
+                "event": "error",
+                "message": str(error_for_bundle),
+                "failure_bundle": failure_bundle,
+            }
+            state.add_step_event(run_id, event)
+            if run_id in state.chat_queues:
+                try:
+                    state.chat_queues[run_id].put_nowait(event)
+                except asyncio.QueueFull:
+                    pass
+        else:
+            state.runs[run_id]["status"] = "completed"
+    except Exception as e:
+        logger.error(f"Follow-up run failed for {run_id}: {e}", exc_info=True)
+        state.runs[run_id]["status"] = "failed"
+        state.runs[run_id]["error"] = str(e)
+
+        video_path = await finalize_video_safe(run_id, browser)
+
+        root_cause = extract_root_cause(e)
+        fix_suggestion = generate_fix_suggestion(root_cause)
+        failure_bundle = build_failure_bundle(
+            dom_snapshot=state.get_dom_snapshot(run_id),
+            screenshot=state.screenshots.get(run_id),
+            action_history=state.get_step_events(run_id),
+            root_cause=root_cause,
+            fix_suggestion=fix_suggestion,
+        )
+        state.set_failure_bundle(run_id, failure_bundle)
+
+        event = {
+            "event": "error",
+            "message": str(e),
+            "failure_bundle": failure_bundle,
+            "video_path": f"/run/{run_id}/video" if video_path else None,
+        }
+        state.add_step_event(run_id, event)
+        if run_id in state.chat_queues:
+            try:
+                state.chat_queues[run_id].put_nowait(event)
+            except asyncio.QueueFull:
+                pass
+    finally:
+        await finalize_video_safe(run_id, browser)
+        if run_id in state.tasks:
+            del state.tasks[run_id]
+
+
 @app.post("/run/{run_id}/chat")
 async def chat_with_agent(
     run_id: str,
@@ -904,9 +1074,19 @@ async def chat_with_agent(
 
     try:
         agent.add_new_task(request.message)
-        return {"status": "ok", "message": "Task added to agent"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    # If the agent already finished, there is no active run loop to process the
+    # follow-up. Revive it: re-run the same agent so the message is actually
+    # executed and its events are streamed again.
+    if run_id not in state.tasks and run_id in state.runs:
+        state.runs[run_id]["status"] = "running"
+        logger.info(f"Reviving completed agent {run_id} for follow-up task")
+        follow_task = asyncio.create_task(follow_up_task(run_id))
+        state.tasks[run_id] = follow_task
+
+    return {"status": "ok", "message": "Task added to agent"}
 
 
 @app.post("/run/{run_id}/stop")
@@ -946,6 +1126,27 @@ async def get_run_status(
         "success": run_data.get("success"),
         "error": run_data.get("error"),
     }
+
+
+@app.get("/run/{run_id}/cdp-url")
+async def get_run_cdp_url(
+    run_id: str,
+    _: bool = Depends(verify_internal_secret),
+):
+    """Return the CDP WebSocket URL for the browser used by this run.
+
+    The api-server's shadow recorder connects a second CDP client to the same
+    Chrome instance so it can capture recording metadata (page signatures,
+    locators, fingerprints) while browser-use drives the agent.
+    """
+    if run_id not in state.runs:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    cdp_url = state.runs[run_id].get("cdp_url")
+    if not cdp_url:
+        raise HTTPException(status_code=404, detail="CDP URL not available — browser may not have started yet")
+
+    return {"cdp_url": cdp_url}
 
 
 @app.get("/run/{run_id}/steps")

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useAuth } from "@/lib/auth";
+import { useAuth, authFetch } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -70,6 +70,7 @@ export function BrowserAgent() {
   const [runError, setRunError] = useState<string | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [completedRunId, setCompletedRunId] = useState<string | null>(null);
+const completedRunIdRef = useRef<string | null>(null);
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const [codeWarnings, setCodeWarnings] = useState<string[]>([]);
   const [traceDiagnostics, setTraceDiagnostics] = useState<GeneratedPlaywrightCode["traceDiagnostics"]>(undefined);
@@ -152,6 +153,109 @@ export function BrowserAgent() {
     };
   }, [status]);
 
+  const applyAgentEvent = useCallback((event: AgentEvent) => {
+    if (event.event !== "started") {
+      setEvents((prev) => [...prev, event]);
+    }
+
+    if (event.event === "started") {
+      currentRunIdRef.current = event.run_id;
+    } else if (event.event === "loading") {
+      if (isValidScreenshot(event.screenshot)) setScreenshot(event.screenshot);
+      if (event.url) setCurrentUrl(event.url);
+      if (event.title) setCurrentTitle(event.title);
+    } else if (event.event === "step") {
+      if (isValidScreenshot(event.screenshot)) {
+        setScreenshot(event.screenshot);
+      }
+      if (event.url) setCurrentUrl(event.url);
+      if (event.title) setCurrentTitle(event.title);
+    } else if (event.event === "done") {
+      const finishedRunId = currentRunIdRef.current;
+      if (finishedRunId) {
+        completedRunIdRef.current = finishedRunId;
+        setCompletedRunId(finishedRunId);
+      }
+      setStatus(event.success ? "completed" : "failed");
+    } else if (event.event === "error") {
+      const finishedRunId2 = currentRunIdRef.current ?? completedRunIdRef.current;
+      if (finishedRunId2) {
+        completedRunIdRef.current = finishedRunId2;
+        setCompletedRunId(finishedRunId2);
+      }
+      setStatus("failed");
+      setRunError(event.message);
+    }
+  }, []);
+
+  /**
+   * Reopen the agent event stream for a completed run so a follow-up message's
+   * steps/screenshots/done are shown live. The backend revives the same agent,
+   * so this mirrors the initial run's event handling.
+   */
+  const openFollowUpStream = useCallback(
+    async (runId: string) => {
+      setStatus("running");
+      setRunError(null);
+      if (screenshotTimer.current) {
+        clearInterval(screenshotTimer.current);
+        screenshotTimer.current = null;
+      }
+      hasReceivedFirstStep.current = false;
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const followUrl = `/api/browser-agent/run/${encodeURIComponent(runId)}/follow`;
+
+      try {
+        const response = await authFetch(followUrl, { signal: controller.signal });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error?.message || `HTTP ${response.status}`);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("No response body");
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              try {
+                applyAgentEvent(JSON.parse(line.slice(6)) as AgentEvent);
+              } catch {
+                // Ignore malformed events
+              }
+            }
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setStatus("failed");
+        setRunError(error instanceof Error ? error.message : "Follow-up stream failed");
+        toast.error(error instanceof Error ? error.message : "Follow-up stream failed");
+      } finally {
+        if (abortRef.current === controller) abortRef.current = null;
+        getBrowserAgentRunHistory()
+          .then(setHistory)
+          .catch(() => {});
+      }
+    },
+    [applyAgentEvent],
+  );
+
   const handleStart = useCallback(async () => {
     if (!url || !goal) {
       toast.error("Please enter a URL and goal");
@@ -163,6 +267,7 @@ export function BrowserAgent() {
     setScreenshot(null);
     setRunError(null);
     setCompletedRunId(null);
+    completedRunIdRef.current = null;
     setGeneratedCode(null);
     setCodeWarnings([]);
     setTraceDiagnostics(undefined);
@@ -204,31 +309,7 @@ export function BrowserAgent() {
         },
         {
           signal: controller.signal,
-          onEvent: (event) => {
-            if (event.event !== "started") {
-              setEvents((prev) => [...prev, event]);
-            }
-
-            if (event.event === "started") {
-              currentRunIdRef.current = event.run_id;
-            } else if (event.event === "loading") {
-              if (isValidScreenshot(event.screenshot)) setScreenshot(event.screenshot);
-              if (event.url) setCurrentUrl(event.url);
-              if (event.title) setCurrentTitle(event.title);
-            } else if (event.event === "step") {
-              if (isValidScreenshot(event.screenshot)) {
-                setScreenshot(event.screenshot);
-              }
-              if (event.url) setCurrentUrl(event.url);
-              if (event.title) setCurrentTitle(event.title);
-            } else if (event.event === "done") {
-              setCompletedRunId(currentRunIdRef.current);
-              setStatus(event.success ? "completed" : "failed");
-            } else if (event.event === "error") {
-              setStatus("failed");
-              setRunError(event.message);
-            }
-          },
+          onEvent: applyAgentEvent,
           onError: (error) => {
             if (screenshotTimer.current) {
               clearInterval(screenshotTimer.current);
@@ -269,7 +350,7 @@ export function BrowserAgent() {
     }
     hasReceivedFirstStep.current = false;
     abortRef.current?.abort();
-    await stopBrowserAgentRun(currentRunIdRef.current ?? undefined);
+    await stopBrowserAgentRun(currentRunIdRef.current ?? completedRunIdRef.current ?? undefined);
     setStatus("stopped");
     currentRunIdRef.current = null;
     getBrowserAgentRunHistory()
@@ -290,6 +371,7 @@ export function BrowserAgent() {
     setCurrentUrl(null);
     setCurrentTitle(null);
     setCompletedRunId(null);
+    completedRunIdRef.current = null;
     setGeneratedCode(null);
     setCodeWarnings([]);
     setTraceDiagnostics(undefined);
@@ -410,14 +492,25 @@ export function BrowserAgent() {
       setEvents((prev) => [...prev, userMsg]);
 
       setChatLoading(true);
-      const success = await sendBrowserAgentChat(message, currentRunIdRef.current ?? undefined);
+      const runId = currentRunIdRef.current ?? completedRunIdRef.current ?? undefined;
+      const success = await sendBrowserAgentChat(
+        message,
+        runId,
+      );
       setChatLoading(false);
 
       if (!success) {
         toast.error("Failed to send message");
+        return;
+      }
+
+      // If the agent had already finished, it's not streaming anymore — reopen
+      // a stream so the revived follow-up's steps and result are shown live.
+      if (runId && !currentRunIdRef.current) {
+        await openFollowUpStream(runId);
       }
     },
-    [],
+    [openFollowUpStream],
   );
 
   const isRunning = status === "running";
@@ -604,23 +697,6 @@ export function BrowserAgent() {
                 </CardContent>
               </Card>
 
-              {/* Run video (finalized once the agent completes) */}
-              {status === "completed" && completedRunId && (
-                <Card className="rounded-xl border-border shadow-lg overflow-hidden">
-                  <CardHeader>
-                    <CardTitle className="text-lg">Run video</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <video
-                      src={`/api/browser-agent/run/${completedRunId}/video`}
-                      controls
-                      playsInline
-                      className="w-full aspect-video rounded-xl border border-border bg-black"
-                    />
-                  </CardContent>
-                </Card>
-              )}
-
               {/* Agent Activity (Steps) */}
               <Card className="rounded-xl border-border shadow-lg flex-none min-w-0 h-[min(60vh,720px)] min-h-[360px] sm:min-h-[420px] overflow-hidden">
                 <CardHeader className="pb-2">
@@ -637,12 +713,12 @@ export function BrowserAgent() {
                   <CardContent className="p-0">
                     <ChatInput
                       onSend={handleChat}
-                      disabled={!isRunning}
+                      disabled={isRunning}
                       loading={chatLoading}
                       placeholder={
                         isRunning
-                          ? "Send a follow-up task to the agent..."
-                          : "Agent is not running"
+                          ? "Agent is running — follow-ups are available once it finishes"
+                          : "Send a follow-up task to the agent..."
                       }
                     />
                   </CardContent>

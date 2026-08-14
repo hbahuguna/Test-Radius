@@ -1,0 +1,31 @@
+{
+  "name": "@workspace/nlp-runner",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.fixture.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "fixture": "tsx fixture/server.ts",
+    "cdp:probe": "tsx src/browser/probe.ts",
+    "qf": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "better-sqlite3": "^13.0.3",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "catalog:",
+    "@types/ws": "^8.5.12",
+    "@vitest/coverage-v8": "^4.1.10",
+    "tsx": "catalog:",
+    "vitest": "^4.1.10"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

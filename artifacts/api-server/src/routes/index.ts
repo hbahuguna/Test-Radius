@@ -8,6 +8,7 @@ import keysRouter from "./keys";
 import billingRouter from "./billing";
 import couponsRouter from "./coupons";
 import stagehandAgentRouter from "./stagehand-agent";
+import queryfirstRouter from "./queryfirst";
 
 const router: IRouter = Router();
 
@@ -20,5 +21,6 @@ router.use("/stagehand-agent", stagehandAgentRouter);
 router.use("/keys", keysRouter);
 router.use("/billing", billingRouter);
 router.use("/tester/coupons", couponsRouter);
+router.use("/queryfirst", queryfirstRouter);
 
 export default router;

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login — QueryFirst Fixture</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="card">
+      <h1>Sign in</h1>
+      <form id="login-form">
+        <label for="login-email">Email</label>
+        <input
+          id="login-email"
+          type="email"
+          data-testid="login-email"
+          name="email"
+          placeholder="you@example.com"
+          required
+        />
+        <label for="login-password">Password</label>
+        <input
+          id="login-password"
+          type="password"
+          data-testid="login-password"
+          name="password"
+          placeholder="••••••••"
+          required
+        />
+        <button type="submit" data-testid="login-submit">Sign in</button>
+      </form>
+      <p id="login-result" class="result" data-testid="login-result" hidden></p>
+      <nav class="back"><a href="index.html">← Home</a></nav>
+    </main>
+    <script src="redesign.js"></script>
+    <script>
+      document.querySelector("#login-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const email = document.querySelector("#login-email").value.trim() || "guest";
+        const result = document.querySelector("#login-result");
+        result.textContent = "Welcome back, " + email + "!";
+        result.hidden = false;
+      });
+    </script>
+  </body>
+</html>

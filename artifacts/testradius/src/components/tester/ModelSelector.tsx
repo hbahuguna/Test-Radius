@@ -55,9 +55,12 @@ export const PROVIDER_MODELS: Record<string, ProviderModel[]> = {
     { id: "claude-sonnet-4", label: "Claude Sonnet 4" },
   ],
   google: [
-    { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-    { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite" },
+    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+    { id: "gemini-flash-latest", label: "Gemini Flash (latest)" },
+    { id: "gemini-3-flash-preview", label: "Gemini 3 Flash (preview)" },
+    { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite" },
     { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash (legacy)" },
   ],
   openrouter: [
     { id: "poolside/laguna-xs-2.1", label: "Laguna XS 2.1" },
