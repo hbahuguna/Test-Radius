@@ -45,12 +45,18 @@ export interface ReplayOptions {
   llmCalls?: number;
   /**
    * Optional self-healer invoked when a step's element can't be located after
-   * one silent retry (Epic QF-64 / QF-66/QF-67). When omitted, a locator miss
-   * fails the step as before.
+   * the full resolve timeout (Epic QF-64 / QF-66/QF-67). When omitted, a
+   * locator miss fails the step as before.
    */
   healer?: StepHealer;
-  /** Delay (ms) before the single silent retry after a locator miss. */
+  /** Polling interval (ms) between element-resolution attempts. Default 200ms. */
   retryDelayMs?: number;
+  /**
+   * How long (ms) to poll for an element before giving up and invoking the
+   * healer (or failing). Default 8 000 ms. Covers async-injected UI such as
+   * cookie consent banners that take 1–3 s to appear after page load.
+   */
+  resolveTimeoutMs?: number;
   /** SSE streaming hook: called for each step result during replay. */
   onEvent?: (event: ReplayEvent) => void;
 }
@@ -100,6 +106,31 @@ export function applyVariables(
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/**
+ * Assign a priority score to a locator for replay ordering.
+ * Lower score = tried first.
+ *
+ * Order: text="…" (most resilient to DOM changes) → #id / [data-testid=…]
+ * (specific and readable) → class-based / role-based (medium) → absolute CSS
+ * paths containing " > " (most brittle, breaks on structural DOM changes).
+ */
+function locatorScore(loc: string): number {
+  if (loc.startsWith('text="')) return 0;
+  if (loc.startsWith("#") || loc.startsWith("[data-testid=") || loc.startsWith('[data-testid="')) return 1;
+  if (loc.includes(" > ")) return 3;
+  return 2;
+}
+
+/**
+ * Return a copy of `locators` sorted by replay resilience: text locators
+ * first, absolute CSS paths last. The recorder captures locators in DOM-
+ * traversal order (CSS-first); replay inverts that priority so the most
+ * stable locators are tried before brittle positional paths.
+ */
+function prioritizeLocators(locators: string[]): string[] {
+  return [...locators].sort((a, b) => locatorScore(a) - locatorScore(b));
+}
+
 export class ReplayRunner {
   private store: DataStore | null = null;
   constructor(private readonly page: Page) {}
@@ -133,14 +164,29 @@ export class ReplayRunner {
     let currentLlmCalls = llmCalls;
     const selfHealedSteps: string[] = [];
 
-    const retryDelayMs = options.retryDelayMs ?? 400;
-    const runOpts = { timeoutMs, pollMs, retryDelayMs, healer: options.healer };
+    const retryDelayMs = options.retryDelayMs ?? 200;
+    const resolveTimeoutMs = options.resolveTimeoutMs ?? 8_000;
+    const runOpts = { timeoutMs, pollMs, retryDelayMs, resolveTimeoutMs, healer: options.healer };
 
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
       const intent = stepToEnglish(step);
       try {
         const exec = await this.executeStep(step, valueMap, slotNameByDefault, extracted, runOpts);
+
+        // Optional step whose element was absent — record as "skipped" and
+        // continue the run rather than failing.
+        if (exec.skipped) {
+          const detail: Record<string, unknown> = { reason: "optional element not present", optional: true };
+          results.push({ idx: i, action: step.action, status: "skipped", intent, detail });
+          store.addRunStep(run.id, { idx: i, status: "skipped", detail });
+          options.onEvent?.({ type: "step", idx: i, status: "skipped", intent, detail, healed: null });
+          if (options.screenshotDir) {
+            await this.screenshot(options.screenshotDir, run.id, i + 1, step.action);
+          }
+          continue;
+        }
+
         if (exec.healed) {
           selfHealed++;
           currentLlmCalls += 1;
@@ -222,8 +268,8 @@ export class ReplayRunner {
     valueMap: Map<string, string>,
     slotNameByDefault: Map<string, string>,
     extracted: Record<string, string>,
-    opts: { timeoutMs: number; pollMs: number; retryDelayMs: number; healer?: StepHealer },
-  ): Promise<{ detail: unknown; healed?: HealResult }> {
+    opts: { timeoutMs: number; pollMs: number; retryDelayMs: number; resolveTimeoutMs: number; healer?: StepHealer },
+  ): Promise<{ detail: unknown; healed?: HealResult; skipped?: true }> {
     switch (step.action) {
       case "navigate": {
         await this.page.navigate(step.value ?? "");
@@ -231,14 +277,33 @@ export class ReplayRunner {
         return { detail: { url: step.value } };
       }
       case "click": {
-        const resolved = await this.resolveWithHeal(step, opts);
+        let resolved;
+        try {
+          resolved = await this.resolveWithHeal(step, opts);
+        } catch (err) {
+          // Only skip on a verified locator-miss (ReplayError from resolveWithHeal).
+          // Other errors — EvaluationError, WaitTimeoutError, NavigationError — are
+          // real operational failures and must propagate even on optional steps.
+          if (step.optional && err instanceof ReplayError) {
+            return { detail: { reason: "optional element not present" }, skipped: true };
+          }
+          throw err;
+        }
         await this.waitForVisible(resolved.selector, step, opts);
         await this.page.click(resolved.selector);
         await this.waitCondition(step.waitCondition, opts);
         return { detail: { selector: resolved.selector, fingerprintMatch: resolved.fingerprintMatch }, healed: resolved.healed ?? undefined };
       }
       case "fill": {
-        const resolved = await this.resolveWithHeal(step, opts);
+        let resolved;
+        try {
+          resolved = await this.resolveWithHeal(step, opts);
+        } catch (err) {
+          if (step.optional && err instanceof ReplayError) {
+            return { detail: { reason: "optional element not present" }, skipped: true };
+          }
+          throw err;
+        }
         await this.waitForVisible(resolved.selector, step, opts);
         const value = valueMap.get(step.value ?? "") ?? step.value ?? "";
         await this.page.fill(resolved.selector, value);
@@ -246,7 +311,15 @@ export class ReplayRunner {
         return { detail: { selector: resolved.selector, value, fingerprintMatch: resolved.fingerprintMatch }, healed: resolved.healed ?? undefined };
       }
       case "select": {
-        const resolved = await this.resolveWithHeal(step, opts);
+        let resolved;
+        try {
+          resolved = await this.resolveWithHeal(step, opts);
+        } catch (err) {
+          if (step.optional && err instanceof ReplayError) {
+            return { detail: { reason: "optional element not present" }, skipped: true };
+          }
+          throw err;
+        }
         await this.waitForVisible(resolved.selector, step, opts);
         const value = valueMap.get(step.value ?? "") ?? step.value ?? "";
         await this.page.select(resolved.selector, value);
@@ -263,7 +336,15 @@ export class ReplayRunner {
           await this.waitCondition(step.waitCondition, opts);
           return { detail: { pageScroll: true } };
         }
-        const resolved = await this.resolveWithHeal(step, opts);
+        let resolved;
+        try {
+          resolved = await this.resolveWithHeal(step, opts);
+        } catch (err) {
+          if (step.optional && err instanceof ReplayError) {
+            return { detail: { reason: "optional element not present" }, skipped: true };
+          }
+          throw err;
+        }
         await this.waitForVisible(resolved.selector, step, opts);
         await this.page.scroll(resolved.selector);
         await this.waitCondition(step.waitCondition, opts);
@@ -299,15 +380,18 @@ export class ReplayRunner {
   private async tryResolve(
     step: Step,
   ): Promise<{ selector: string; fingerprintMatch: boolean } | null> {
-    const locators =
+    const raw =
       step.locators && step.locators.length > 0
         ? step.locators
         : step.selector
           ? [step.selector]
           : [];
-    if (locators.length === 0) {
+    if (raw.length === 0) {
       throw new ReplayError(`no locator candidates for "${step.action}" step`);
     }
+    // Reorder so text-based locators are tried first (most resilient to DOM
+    // structural changes), CSS absolute paths last (most brittle).
+    const locators = prioritizeLocators(raw);
     const res: ResolveResult = await this.page.evaluate(
       resolveElement,
       locators,
@@ -324,7 +408,7 @@ export class ReplayRunner {
 
   private async resolveWithHeal(
     step: Step,
-    opts: { retryDelayMs: number; healer?: StepHealer },
+    opts: { retryDelayMs: number; resolveTimeoutMs: number; healer?: StepHealer },
   ): Promise<{
     selector: string;
     fingerprintMatch: boolean;
@@ -337,36 +421,40 @@ export class ReplayRunner {
           ? [step.selector]
           : [];
     const missError = () =>
-      new ReplayError(`no element matches any of: ${stepLocators.join(", ")}`);
+      new ReplayError(`no element matches any of: ${prioritizeLocators(stepLocators).join(", ")}`);
 
-    let resolved = await this.tryResolve(step);
     // An exact (fingerprint-matching) resolution is the happy path: the cached
     // locator still identifies the same element, so no healing is needed. When
     // the recorded step has no fingerprint baseline (e.g. a navigation click —
     // the interacted element is gone so we couldn't capture one), drift cannot
     // be detected, so a resolved locator is accepted as-is.
-    const matchesBaseline = (r: NonNullable<typeof resolved>) =>
+    const matchesBaseline = (r: NonNullable<Awaited<ReturnType<typeof this.tryResolve>>>) =>
       r.fingerprintMatch || !step.elementFingerprint;
+
+    // Poll for the element with a configurable timeout instead of a single
+    // short retry. This handles async-injected UI (cookie banners, overlays,
+    // lazy-loaded content) that takes 1–3 s to appear after page load.
+    const resolveDeadline = Date.now() + opts.resolveTimeoutMs;
+    let resolved = await this.tryResolve(step);
     if (resolved && matchesBaseline(resolved)) {
       return { ...resolved, healed: null };
     }
 
-    // QF-66: one silent retry after a short wait only covers a *transient* miss
-    // (the element isn't present yet, e.g. still appearing). A fingerprint
-    // drift (element present but its identity changed) is not transient, so we
-    // retry only when the element could not be located at all.
-    if (!resolved) {
-      await sleep(opts.retryDelayMs);
-      resolved = await this.tryResolve(step);
-      if (resolved && matchesBaseline(resolved)) {
-        return { ...resolved, healed: null };
+    while (Date.now() < resolveDeadline) {
+      const remaining = resolveDeadline - Date.now();
+      await sleep(Math.min(opts.retryDelayMs, remaining));
+      const next = await this.tryResolve(step);
+      if (next) {
+        if (matchesBaseline(next)) return { ...next, healed: null };
+        // Keep the first partial match as fallback (fingerprint mismatch but
+        // element located) — continues polling hoping for exact match.
+        if (!resolved) resolved = next;
       }
     }
 
     // No healer wired: accept a drifted fallback locator if one resolved (so a
     // removed stable attribute still replays via a fallback locator), otherwise
-    // surface the original miss. This preserves the pre-QF-66 fallback behavior
-    // when self-healing is not enabled.
+    // surface the original miss.
     if (!opts.healer) {
       if (resolved) return { ...resolved, healed: null };
       throw missError();

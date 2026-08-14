@@ -74,6 +74,29 @@ function cssEscape(value: string): string {
 }
 
 /**
+ * Detect whether a recorded element is a consent/cookie banner or modal
+ * overlay that only appears under certain browser-state conditions (e.g. first
+ * visit, cookies not yet granted). Such steps should be marked optional so
+ * replay skips them gracefully when the element is absent rather than failing.
+ *
+ * We check the accessible name (ax_name) and aria-label attribute because
+ * these reflect the visible label most reliably across cookie-banner vendors.
+ */
+function isConsentElement(element: BrowserUseElement | null, axName: string | null): boolean {
+  const text = [
+    axName,
+    element?.attributes?.["aria-label"],
+    element?.ax_name,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  // Match specific consent/cookie/privacy keywords. "allow" and "accept" alone
+  // are too broad; require them paired with a consent context word.
+  return /\bcookie\b|\bconsent\b|\bgdpr\b|\baccept\s+all\b|\ballow\s+all\b|\breject\s+all\b|\bdismiss\s+cookie\b|\bcookie\s+banner\b|\bprivacy\s+settings\b/.test(text);
+}
+
+/**
  * Maps a browser-use action class name to our StepAction.
  */
 function mapAction(actionName: string): StepAction | null {
@@ -439,6 +462,12 @@ export class ShadowRecorder {
       }
     }
 
+    // Auto-detect optional steps: cookie/consent banners and overlays only
+    // appear under certain browser-state conditions (first visit, no stored
+    // consent cookie). Mark them optional so replay skips gracefully when the
+    // element is absent instead of failing the whole test.
+    const optional = isConsentElement(entry.element, entry.element?.ax_name ?? null);
+
     return {
       action: stepAction,
       selector,
@@ -449,6 +478,7 @@ export class ShadowRecorder {
       pageSignatureAfter: sigAfter,
       waitCondition,
       assertion: null,
+      optional,
     };
   }
 

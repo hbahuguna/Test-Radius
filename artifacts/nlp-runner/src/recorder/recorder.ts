@@ -30,6 +30,8 @@ export interface RecordedStep {
   pageSignatureAfter: string | null;
   waitCondition: WaitCondition | null;
   assertion: Assertion | null;
+  /** Auto-detected or manually set: step is skipped gracefully when the element is absent. */
+  optional?: boolean;
 }
 
 export interface RecordedSlot {

@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle, Loader2, Circle } from "lucide-react";
+import { CheckCircle2, XCircle, Loader2, Circle, MinusCircle } from "lucide-react";
 
 export interface StepEvent {
   step?: number;
@@ -71,8 +71,10 @@ export function LiveProgress({ steps, screenshot, status, success }: LiveProgres
 }
 
 function StatusIcon({ status }: { status?: string }) {
-  if (status === "error") return <XCircle className="h-4 w-4 text-red-600 mt-0.5" />;
-  if (status === "done" || status === "success")
+  if (status === "error" || status === "failed") return <XCircle className="h-4 w-4 text-red-600 mt-0.5" />;
+  if (status === "done" || status === "success" || status === "passed")
     return <CheckCircle2 className="h-4 w-4 text-green-600 mt-0.5" />;
+  if (status === "skipped")
+    return <MinusCircle className="h-4 w-4 text-muted-foreground mt-0.5" />;
   return <Loader2 className="h-4 w-4 animate-spin text-primary mt-0.5" />;
 }

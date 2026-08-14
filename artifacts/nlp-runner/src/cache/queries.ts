@@ -68,6 +68,7 @@ interface StepRow {
   page_signature_after: string | null;
   wait_condition_json: string | null;
   assertion_json: string | null;
+  optional: number | null;
 }
 
 interface SlotRow {
@@ -241,10 +242,10 @@ export class DataStore {
       .prepare(
         `INSERT INTO steps (
            test_id, idx, action, selector, value, locators_json, element_fingerprint,
-           page_signature_before, page_signature_after, wait_condition_json, assertion_json
+           page_signature_before, page_signature_after, wait_condition_json, assertion_json, optional
          ) VALUES (
            @testId, @idx, @action, @selector, @value, @locatorsJson, @elementFingerprint,
-           @pageSignatureBefore, @pageSignatureAfter, @waitConditionJson, @assertionJson
+           @pageSignatureBefore, @pageSignatureAfter, @waitConditionJson, @assertionJson, @optional
          )`,
       )
       .run({
@@ -259,6 +260,7 @@ export class DataStore {
         pageSignatureAfter: input.pageSignatureAfter ?? null,
         waitConditionJson: input.waitCondition ? JSON.stringify(input.waitCondition) : null,
         assertionJson: input.assertion ? JSON.stringify(input.assertion) : null,
+        optional: input.optional ? 1 : 0,
       });
     return this.getStep(Number(result.lastInsertRowid))!;
   }
@@ -279,7 +281,8 @@ export class DataStore {
            action = @action, selector = @selector, value = @value,
            locators_json = @locatorsJson, element_fingerprint = @elementFingerprint,
            page_signature_before = @pageSignatureBefore, page_signature_after = @pageSignatureAfter,
-           wait_condition_json = @waitConditionJson, assertion_json = @assertionJson
+           wait_condition_json = @waitConditionJson, assertion_json = @assertionJson,
+           optional = @optional
          WHERE id = @id`,
       )
       .run({
@@ -313,6 +316,7 @@ export class DataStore {
             : input.assertion
               ? JSON.stringify(input.assertion)
               : null,
+        optional: input.optional === undefined ? (current.optional ? 1 : 0) : (input.optional ? 1 : 0),
       });
     return this.getStep(id)!;
   }
@@ -671,6 +675,7 @@ function mapStep(row: StepRow): Step {
     pageSignatureAfter: row.page_signature_after,
     waitCondition: jsonParse<WaitCondition>(row.wait_condition_json),
     assertion: jsonParse<Assertion>(row.assertion_json),
+    optional: Boolean(row.optional ?? 0),
   };
 }
 

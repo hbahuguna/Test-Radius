@@ -72,6 +72,13 @@ export interface Step {
   pageSignatureAfter: string | null;
   waitCondition: WaitCondition | null;
   assertion: Assertion | null;
+  /**
+   * When true, the replay engine skips this step gracefully (with a "skipped"
+   * status) instead of failing when the target element is not found after the
+   * full resolution timeout. Use for cookie banners, consent overlays, tour
+   * modals, and any UI that only appears under certain browser state conditions.
+   */
+  optional?: boolean;
 }
 
 export interface NewStep {
@@ -84,6 +91,7 @@ export interface NewStep {
   pageSignatureAfter?: string | null;
   waitCondition?: WaitCondition | null;
   assertion?: Assertion | null;
+  optional?: boolean;
 }
 
 export type SlotKind = "email" | "name" | "number" | "text";

@@ -539,6 +539,7 @@ function buildStepsWithNavigation(
       pageSignatureAfter: s.pageSignatureAfter ?? null,
       waitCondition: s.waitCondition ?? null,
       assertion: s.assertion ?? null,
+      optional: s.optional ?? false,
     }))
   );
 

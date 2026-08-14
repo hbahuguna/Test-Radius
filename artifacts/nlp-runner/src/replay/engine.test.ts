@@ -6,7 +6,7 @@ import type { Page } from "../browser/session.js";
 import { openDatabase } from "../cache/db.js";
 import { DataStore } from "../cache/queries.js";
 import type { Step, TestWithSteps } from "../cache/types.js";
-import { applyVariables, ReplayRunner, type ReplayResult } from "./engine.js";
+import { applyVariables, ReplayError, ReplayRunner, type ReplayResult } from "./engine.js";
 import type { HealResult, StepHealer } from "./heal.js";
 import { stepToEnglish } from "../util/describe.js";
 
@@ -144,18 +144,22 @@ class FakePage implements Pick<Page, "evaluate" | "click" | "fill" | "select" | 
         selector: this.resolveResult.found ? locators[0] : null,
       } as T;
     }
-    if (body.includes("querySelector(sel)") && body.includes("textContent")) {
-      return this.textValue as T;
-    }
-    if (body.includes("querySelector(sel)") && body.includes(".value")) {
-      return this.textValue as T;
-    }
+    // Check getBoundingClientRect BEFORE querySelector+textContent because
+    // elementIsVisible inlines both the text-search loop (textContent) and the
+    // rect check. Matching textContent first would return a truthy string
+    // instead of the boolean visibility result, silently masking failures.
     if (body.includes("getBoundingClientRect")) {
       this.visibleChecks++;
       if (this.visibleFlipAfter !== undefined) {
         return (this.visibleChecks >= this.visibleFlipAfter) as T;
       }
       return this.visible as T;
+    }
+    if (body.includes("querySelector(sel)") && body.includes("textContent")) {
+      return this.textValue as T;
+    }
+    if (body.includes("querySelector(sel)") && body.includes(".value")) {
+      return this.textValue as T;
     }
     throw new Error(`FakePage.evaluate: unexpected function ${body.slice(0, 60)}`);
   }
@@ -190,7 +194,9 @@ describe("ReplayRunner.runTest", () => {
     expect(result.success).toBe(true);
     expect(result.steps.map((s) => s.status)).toEqual(["passed", "passed", "passed"]);
     expect(page.fills).toEqual([["#signup-name", "Ada"]]);
-    expect(page.clicks).toEqual(['[data-testid="signup-submit"]']);
+    // prioritizeLocators places text="…" before data-testid, so the text
+    // locator is the one actually resolved and used to drive the click.
+    expect(page.clicks).toEqual(['text="Create account"']);
 
     const run = store.getRun(result.runId)!;
     expect(run.status).toBe("passed");
@@ -450,7 +456,7 @@ describe("ReplayRunner.runTest", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(page.clicks).toEqual(['[data-testid="signup-submit"]']);
+    expect(page.clicks).toEqual(['text="Create account"']);
     expect(page.visibleChecks).toBeGreaterThanOrEqual(3);
   });
 
@@ -603,8 +609,11 @@ describe("ReplayRunner self-heal (Epic QF-64)", () => {
   it("heals a locator miss, persists a version, and counts one LLM call", async () => {
     const store = makeStore();
     const page = new FakePage();
-    // initial + retry both miss; the heal validation re-resolves successfully
-    page.resolveFailTimes = 2;
+    // resolveTimeoutMs:0 skips the polling window; only 1 resolve attempt is
+    // made before handing off to the healer.  resolveFailTimes=1 makes that
+    // single attempt miss, so the healer is guaranteed to be invoked, while
+    // the healer's own validation call (attempt 2) resolves successfully.
+    page.resolveFailTimes = 1;
     const test = makeTest(store, [makeStep({ action: "click" })]);
     const healer = baseHealer();
 
@@ -615,6 +624,7 @@ describe("ReplayRunner self-heal (Epic QF-64)", () => {
 
     const result = await new ReplayRunner(page as unknown as Page).runTest(store, test, {
       retryDelayMs: 0,
+      resolveTimeoutMs: 0,
       healer,
     });
 
@@ -637,11 +647,12 @@ describe("ReplayRunner self-heal (Epic QF-64)", () => {
   it("fails cleanly without healing when no healer is wired", async () => {
     const store = makeStore();
     const page = new FakePage();
-    page.resolveFailTimes = 10; // always miss
+    page.resolveFailTimes = 10; // always miss within the test window
     const test = makeTest(store, [makeStep({ action: "click" })]);
 
     const result = await new ReplayRunner(page as unknown as Page).runTest(store, test, {
       retryDelayMs: 0,
+      resolveTimeoutMs: 0,
     });
 
     expect(result.success).toBe(false);
@@ -659,6 +670,7 @@ describe("ReplayRunner self-heal (Epic QF-64)", () => {
 
     const result = await new ReplayRunner(page as unknown as Page).runTest(store, test, {
       retryDelayMs: 0,
+      resolveTimeoutMs: 0,
       healer,
     });
 
@@ -692,7 +704,89 @@ describe("ReplayRunner self-heal (Epic QF-64)", () => {
     expect(healer.calls).toBe(0);
     expect(result.selfHealed).toBe(0);
     expect(result.llmCalls).toBe(0);
-    expect(page.clicks).toEqual(['[data-testid="signup-submit"]']);
+    // text="…" locator wins priority ordering over the data-testid
+    expect(page.clicks).toEqual(['text="Create account"']);
+  });
+
+  // ── New tests: delayed resolution polling ────────────────────────────────
+
+  it("succeeds when the element appears after several failed resolve attempts (polled wait)", async () => {
+    // Simulates an async-injected element (cookie banner, modal) that isn't in
+    // the DOM on the first attempt but shows up within the polling window.
+    const store = makeStore();
+    const page = new FakePage();
+    page.resolveFailTimes = 5; // first 5 attempts miss; 6th succeeds
+    const test = makeTest(store, [makeStep({ action: "click" })]);
+
+    const result = await new ReplayRunner(page as unknown as Page).runTest(store, test, {
+      retryDelayMs: 0,
+      resolveTimeoutMs: 5_000, // window large enough for 6+ attempts at delay=0
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.selfHealed).toBe(0);
+    expect(page.resolveAttempts).toBeGreaterThanOrEqual(6);
+  });
+
+  it("fails with a locator-miss error when the element never appears within the timeout", async () => {
+    const store = makeStore();
+    const page = new FakePage();
+    page.resolveFailTimes = Number.MAX_SAFE_INTEGER; // never resolves
+    const test = makeTest(store, [makeStep({ action: "click" })]);
+
+    const result = await new ReplayRunner(page as unknown as Page).runTest(store, test, {
+      retryDelayMs: 0,
+      resolveTimeoutMs: 50, // short window; times out quickly
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/no element matches/);
+  });
+
+  // ── New tests: optional step skipping ────────────────────────────────────
+
+  it("skips an optional step whose element is absent and continues the run", async () => {
+    // resolveFailTimes=1 + resolveTimeoutMs=0: the click step's single resolve
+    // attempt misses (attempt 1 ≤ 1), triggering ReplayError → optional skip.
+    // The fill step then succeeds on its resolve attempt (attempt 2 > 1).
+    const store = makeStore();
+    const page = new FakePage();
+    page.resolveFailTimes = 1;
+    const test = makeTest(store, [
+      makeStep({ action: "click", optional: true }),
+      makeStep({ action: "fill", selector: "#signup-name", value: "Ada", locators: ["#signup-name"] }),
+    ]);
+
+    const result = await new ReplayRunner(page as unknown as Page).runTest(store, test, {
+      retryDelayMs: 0,
+      resolveTimeoutMs: 0,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.steps[0]?.status).toBe("skipped");
+    expect(result.steps[1]?.status).toBe("passed");
+  });
+
+  it("does NOT skip an optional step when the failure is a visibility timeout, not a locator miss", async () => {
+    // A WaitTimeoutError (element found but never becomes visible) must propagate
+    // even on optional steps: it's an operational failure, not a missing element.
+    const store = makeStore();
+    const page = new FakePage();
+    page.visible = false;
+    page.visibleFlipAfter = Number.POSITIVE_INFINITY;
+    const test = makeTest(store, [
+      makeStep({ action: "click", optional: true }),
+    ]);
+
+    const result = await new ReplayRunner(page as unknown as Page).runTest(store, test, {
+      timeoutMs: 50,
+      pollMs: 5,
+    });
+
+    // The run FAILS because the WaitTimeoutError is not caught by the optional handler
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Timed out waiting/);
+    expect(result.steps[0]?.status).toBe("failed");
   });
 
   it("heals when the element resolves but its fingerprint drifted from a recorded baseline", async () => {
@@ -711,6 +805,7 @@ describe("ReplayRunner self-heal (Epic QF-64)", () => {
 
     const result = await new ReplayRunner(page as unknown as Page).runTest(store, test, {
       retryDelayMs: 0,
+      resolveTimeoutMs: 0, // fingerprint mismatch is consistent; skip polling to keep test fast
       healer,
     });
 

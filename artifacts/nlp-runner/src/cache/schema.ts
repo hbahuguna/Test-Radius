@@ -103,6 +103,16 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX idx_tests_entry_hash ON tests(entry_url, step_hash)`,
     ],
   },
+  {
+    version: 3,
+    name: "add-step-optional",
+    sql: [
+      // Mark steps that target conditional/ephemeral elements (cookie banners,
+      // consent overlays, tour modals) so the replay engine can skip them
+      // gracefully instead of failing when they don't appear.
+      `ALTER TABLE steps ADD COLUMN optional INTEGER NOT NULL DEFAULT 0`,
+    ],
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
