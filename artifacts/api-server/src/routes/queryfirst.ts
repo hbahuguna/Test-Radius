@@ -27,6 +27,19 @@ import {
 
 const CHROME_WARMING_UP_MSG =
   "Chrome is still downloading on this server (first cold start takes ~3 minutes). Please wait a moment and try again.";
+
+/**
+ * Prepend variable values to the recording goal so the browser-use agent
+ * always uses the provided values when filling forms instead of inventing its
+ * own. Variables are provided as { "First Name": "Ada", "email": "ada@..." }.
+ */
+function buildGoalWithVariables(query: string, variables?: Record<string, string>): string {
+  if (!variables || Object.keys(variables).length === 0) return query;
+  const lines = Object.entries(variables)
+    .map(([k, v]) => `- ${k}: ${v}`)
+    .join("\n");
+  return `${query}\n\nIMPORTANT — When filling in any form fields, always use EXACTLY these values (do not invent alternatives):\n${lines}`;
+}
 import { ShadowRecorder, type BrowserUseStepEvent } from "../lib/browser-use-recorder.js";
 import type { BrowserAgentEvent, BrowserAgentStepEvent, BrowserAgentDoneEvent, BrowserAgentErrorEvent } from "../lib/browser-use-client.js";
 
@@ -309,7 +322,7 @@ router.post("/record", async (req: Request, res: Response) => {
         },
         body: JSON.stringify({
           url: entry_url ?? "about:blank",
-          goal: query,
+          goal: buildGoalWithVariables(query, variables),
           model_id: model_id ?? llmCfg.model,
           max_steps: max_steps ?? 50,
           model_provider: provider,

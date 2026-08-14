@@ -118,10 +118,15 @@ function buildLocators(element: BrowserUseElement | null): {
     const css = xpathToCss(xpath);
     if (css) locators.push(css);
   }
-  // text=
+  // text= — used for any interactive element that has a visible label.
+  // Kept broad so tabs, menu items, list items, and role-based elements are
+  // captured with a stable text locator alongside any CSS/XPath fallbacks.
   const axName = element.ax_name;
   const tag = (element.node_name ?? "").toLowerCase();
-  if (axName && ["button", "a", "summary"].includes(tag)) {
+  const role = (attrs["role"] ?? "").toLowerCase();
+  const TEXT_TAGS = new Set(["button", "a", "summary", "li", "option", "label", "span", "div", "input", "select", "textarea"]);
+  const TEXT_ROLES = new Set(["button", "link", "tab", "menuitem", "option", "checkbox", "radio"]);
+  if (axName && (TEXT_TAGS.has(tag) || TEXT_ROLES.has(role))) {
     locators.push(`text="${axName.slice(0, 80)}"`);
   }
 

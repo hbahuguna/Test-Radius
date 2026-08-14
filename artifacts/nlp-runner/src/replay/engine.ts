@@ -254,6 +254,15 @@ export class ReplayRunner {
         return { detail: { selector: resolved.selector, value, fingerprintMatch: resolved.fingerprintMatch }, healed: resolved.healed ?? undefined };
       }
       case "scroll": {
+        // A scroll step recorded without a target element is a page-level scroll
+        // (the agent scrolled the viewport, not to a specific element). Execute
+        // it as a window.scrollBy instead of failing with "no locator candidates".
+        const hasLocator = (step.locators && step.locators.length > 0) || step.selector;
+        if (!hasLocator) {
+          await this.page.evaluate(() => { window.scrollBy(0, window.innerHeight * 0.75); });
+          await this.waitCondition(step.waitCondition, opts);
+          return { detail: { pageScroll: true } };
+        }
         const resolved = await this.resolveWithHeal(step, opts);
         await this.waitForVisible(resolved.selector, step, opts);
         await this.page.scroll(resolved.selector);
