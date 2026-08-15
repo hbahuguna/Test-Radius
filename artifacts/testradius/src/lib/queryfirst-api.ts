@@ -35,6 +35,12 @@ export interface QfTest {
   stepCount: number;
   steps: QfTestStep[];
   slots: QfSlot[];
+  /**
+   * A short success phrase captured at record time (e.g. "Thanks for signing
+   * up"). When set, replay short-circuits if this phrase is already visible on
+   * the page — making the test idempotent against one-time side effects.
+   */
+  completionHint: string | null;
 }
 
 export interface QfRun {

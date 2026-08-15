@@ -66,6 +66,7 @@ interface TestRow {
   entry_url: string | null;
   step_hash: string | null;
   description: string | null;
+  completion_hint: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -266,6 +267,17 @@ export class DataStore {
   listTestNames(): string[] {
     const rows = this.db.prepare(`SELECT name FROM tests`).all() as { name: string }[];
     return rows.map((r) => r.name);
+  }
+
+  /**
+   * Store (or clear) the completion hint for a test. Called immediately after
+   * recording succeeds so that subsequent replays can short-circuit when the
+   * goal state is already present on the page.
+   */
+  updateCompletionHint(testId: number, hint: string | null): void {
+    this.db
+      .prepare(`UPDATE tests SET completion_hint = ?, updated_at = ? WHERE id = ?`)
+      .run(hint, now(), testId);
   }
 
   updateTest(id: number, input: Partial<NewTest>): Test {
@@ -1049,6 +1061,7 @@ function mapTest(row: TestRow): Test {
     entryUrl: row.entry_url,
     stepHash: row.step_hash,
     description: row.description,
+    completionHint: row.completion_hint ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

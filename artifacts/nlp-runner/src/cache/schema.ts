@@ -181,6 +181,18 @@ export const MIGRATIONS: Migration[] = [
       `ALTER TABLE train_suites ADD COLUMN parallel INTEGER NOT NULL DEFAULT 0`,
     ],
   },
+  {
+    version: 6,
+    name: "add-completion-hint",
+    sql: [
+      // A short phrase captured from the browser-use agent's done message that
+      // identifies the success state of the page (e.g. "Thanks for signing up").
+      // During replay, if this phrase is already visible in document.body.innerText
+      // the remaining steps are skipped and the run is marked as passed — making
+      // tests idempotent against one-time side effects (form submissions, etc.).
+      `ALTER TABLE tests ADD COLUMN completion_hint TEXT`,
+    ],
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;

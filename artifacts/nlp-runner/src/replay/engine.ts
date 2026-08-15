@@ -44,6 +44,15 @@ export interface ReplayOptions {
    */
   llmCalls?: number;
   /**
+   * A short phrase that identifies the test's success/goal state (e.g.
+   * "Thanks for signing up to the Mitie Newsletter"). When set, the runner
+   * checks `document.body.innerText` for this phrase before executing each
+   * step (after the first navigate). If the phrase is already present the
+   * remaining steps are skipped and the run is recorded as passed — making
+   * the test idempotent against one-time side effects such as form submissions.
+   */
+  completionHint?: string;
+  /**
    * Optional self-healer invoked when a step's element can't be located after
    * the full resolve timeout (Epic QF-64 / QF-66/QF-67). When omitted, a
    * locator miss fails the step as before.
@@ -175,6 +184,41 @@ export class ReplayRunner {
     const runOpts = { timeoutMs, pollMs, retryDelayMs, resolveTimeoutMs, healer: options.healer };
 
     for (let i = 0; i < steps.length; i++) {
+      // ── Completion-hint short-circuit ──────────────────────────────────────
+      // After the first navigate has loaded the page (i > 0), check whether
+      // the recorded success phrase is already visible. If so, skip all
+      // remaining steps and record the run as passed — making the test
+      // idempotent against one-time side effects (form submissions, etc.).
+      if (i > 0 && options.completionHint) {
+        try {
+          const bodyText = (await this.page.evaluate(() => document.body.innerText)) as string;
+          if (bodyText.includes(options.completionHint)) {
+            for (let k = i; k < steps.length; k++) {
+              const s = steps[k];
+              const skipIntent = stepToEnglish(s);
+              const detail = { reason: "goal already achieved" };
+              results.push({ idx: k, action: s.action, status: "skipped", intent: skipIntent, detail });
+              store.addRunStep(run.id, { idx: k, status: "skipped", detail });
+              options.onEvent?.({ type: "step", idx: k, status: "skipped", intent: skipIntent, detail, healed: null });
+            }
+            store.finishRun(run.id, "passed");
+            return {
+              runId: run.id,
+              testId: test.id,
+              success: true,
+              steps: results,
+              extracted,
+              llmCalls: currentLlmCalls,
+              selfHealed,
+              selfHealedSteps,
+            };
+          }
+        } catch {
+          // page.evaluate can fail if the page is mid-navigation; just proceed
+        }
+      }
+      // ──────────────────────────────────────────────────────────────────────
+
       const step = steps[i];
       const intent = stepToEnglish(step);
       try {

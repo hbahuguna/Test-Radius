@@ -10,6 +10,13 @@ export interface Test {
   entryUrl: string | null;
   stepHash: string | null;
   description: string | null;
+  /**
+   * A short phrase (e.g. "Thanks for signing up") extracted from the
+   * browser-use agent's done message at record time. During replay the engine
+   * checks `document.body.innerText` for this phrase before each step; if
+   * found, remaining steps are skipped and the run is marked as passed.
+   */
+  completionHint: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -23,6 +30,7 @@ export interface NewTest {
   entryUrl?: string | null;
   stepHash?: string | null;
   description?: string | null;
+  completionHint?: string | null;
 }
 
 export type StepAction =

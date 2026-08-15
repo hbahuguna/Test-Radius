@@ -187,6 +187,26 @@ function suiteScreenshotsDir(): string {
   return join(qfDataDir(), "screenshots");
 }
 
+// ----- utilities -------------------------------------------------------------
+
+/**
+ * Extract a short success phrase from the browser-use agent's done message so
+ * it can be stored as the test's `completionHint` and used during replay to
+ * detect an already-achieved goal state.
+ *
+ * Strategy: find single-quoted strings longer than 15 characters, exclude
+ * anything that looks like an email address or URL, then return the longest
+ * match — which is almost always the confirmation message the agent explicitly
+ * quotes (e.g. "Thanks for signing up to the Mitie Newsletter…").
+ */
+function extractCompletionHint(doneMessage: string): string | null {
+  const matches = [...doneMessage.matchAll(/'([^']{15,200})'/g)]
+    .map((m) => m[1].trim())
+    .filter((s) => !s.includes("@") && !s.startsWith("http") && !s.startsWith("//"));
+  if (matches.length === 0) return null;
+  return matches.reduce((a, b) => (b.length > a.length ? b : a));
+}
+
 // ----- routes ----------------------------------------------------------------
 
 // GET /queryfirst/tests — list all recorded tests
@@ -218,6 +238,7 @@ router.get("/tests", async (_req: Request, res: Response) => {
           kind: s.kind,
           defaultValue: s.defaultValue,
         })),
+        completionHint: t.completionHint ?? null,
       };
     });
     res.json({ tests: out });
@@ -524,6 +545,16 @@ router.post("/record", async (req: Request, res: Response) => {
           savedTestId = saved.id;
           logger.info({ testId: saved.id }, "queryfirst: record — test saved");
 
+          // Extract and persist completion hint from the agent's done message
+          const doneMsg = (event as BrowserAgentDoneEvent).message ?? "";
+          if ((event as BrowserAgentDoneEvent).success && doneMsg) {
+            const hint = extractCompletionHint(doneMsg);
+            if (hint) {
+              store.updateCompletionHint(saved.id, hint);
+              logger.info({ testId: saved.id, hint }, "queryfirst: record — completion hint captured");
+            }
+          }
+
           // 7. Dry-run gate
           const gateResult = await runDryRunGate(store, saved.id, variables);
           sseWrite(res, {
@@ -790,6 +821,7 @@ router.post("/replay", async (req: Request, res: Response) => {
     const result = await runner.runTest(store, test, {
       variables: variables ?? {},
       healer,
+      completionHint: test.completionHint ?? undefined,
       onEvent: (event: ReplayEvent) => {
         if (active.stopped) return;
         sseWrite(res, { event: "replay", ...event });
