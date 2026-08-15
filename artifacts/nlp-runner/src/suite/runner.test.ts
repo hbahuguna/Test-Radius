@@ -234,6 +234,69 @@ describe("SuiteRunner (parallel)", () => {
   });
 });
 
+describe("SuiteRunner (abort)", () => {
+  it("stops launching tests and marks the suite failed once the signal aborts mid-test", async () => {
+    const store = makeStore();
+    const suiteId = seedSuite(store, ["A", "B", "C"]);
+    const order: string[] = [];
+    const runner = makeRunner(store);
+    const controller = new AbortController();
+
+    // Simulates a hung browser-backed test that only ends once aborted.
+    const runTestFn: RunTestFn = async (test, suiteRunId) => {
+      order.push(test.name);
+      const run = store.createRun({ testId: test.id, status: "running", suiteRunId });
+      await new Promise<void>((resolve) => {
+        controller.signal.addEventListener(
+          "abort",
+          () => {
+            store.finishRun(run.id, "failed", "Stopped by user");
+            resolve();
+          },
+          { once: true },
+        );
+      });
+      return {
+        runId: run.id,
+        testId: test.id,
+        success: false,
+        steps: [],
+        extracted: {},
+        llmCalls: 0,
+        selfHealed: 0,
+        selfHealedSteps: [],
+        error: "Stopped by user",
+      };
+    };
+
+    const pending = runner.runSuite(suiteId, { runTestFn, signal: controller.signal });
+    await Promise.resolve();
+    controller.abort(new Error("Stopped by user"));
+    const suiteRun = await pending;
+
+    expect(suiteRun.status).toBe("failed");
+    expect(suiteRun.error).toBe("Stopped by user");
+    expect(order).toEqual(["A"]);
+  });
+
+  it("launches no tests at all when aborted before the first test starts", async () => {
+    const store = makeStore();
+    const suiteId = seedSuite(store, ["A", "B"]);
+    const order: string[] = [];
+    const controller = new AbortController();
+    controller.abort(new Error("Stopped by user"));
+
+    const suiteRun = await makeRunner(store).runSuite(suiteId, {
+      runTestFn: fakeRunTest(store, order, new Set()),
+      signal: controller.signal,
+    });
+
+    expect(suiteRun.status).toBe("failed");
+    expect(suiteRun.error).toBe("Stopped by user");
+    expect(order).toEqual([]);
+  });
+});
+
 describe("SuiteRunner (mixed parallel + sequential)", () => {
   const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 

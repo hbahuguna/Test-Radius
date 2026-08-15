@@ -11,6 +11,7 @@ import {
   listSuites,
   listTrains,
   startTrainRun,
+  stopRun,
   updateTrainSuites,
   type QfEvent,
   type QfMode,
@@ -157,8 +158,13 @@ export function TrainsPanel() {
     }
   };
 
-  const handleStop = () => {
-    abortRef.current?.abort();
+  const handleStop = async () => {
+    try {
+      await stopRun();
+      refresh();
+    } catch {
+      /* ignore */
+    }
   };
 
   const handleDelete = async (train: QfTrain) => {
@@ -270,7 +276,7 @@ export function TrainsPanel() {
                           ))}
                         </div>
                         <Button variant="destructive" size="sm" className="text-xs h-7" onClick={handleStop}>
-                          <Square className="size-3 mr-1" /> Stop (after current suite)
+                          <Square className="size-3 mr-1" /> Stop
                         </Button>
                       </div>
                     )}

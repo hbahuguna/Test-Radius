@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getTrainRunSuites, listTrainRunsPage, type QfTrainRunSummary } from "@/lib/queryfirst-api";
 import { RefreshCw } from "lucide-react";
 import { PagedRunList } from "./PagedRunList";
+import { RunningBanner } from "./RunningBanner";
 import { RunStatusBadge } from "./RunStatusBadge";
 import { fmtDuration, fmtTime } from "./format";
 import { SuiteRunDetailView } from "./SuiteRunDetailView";
@@ -98,7 +99,13 @@ function TrainRunList({ onOpenTrainRun }: { onOpenTrainRun: (trainRunId: number)
           </Button>
         </CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-2">
+        <RunningBanner
+          onFinished={() => {
+            setLoading(true);
+            loadPage(0, false);
+          }}
+        />
         <PagedRunList
           rows={runs}
           hasMore={hasMore}

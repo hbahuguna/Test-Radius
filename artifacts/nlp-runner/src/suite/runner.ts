@@ -136,6 +136,7 @@ export type RunTestFn = (
   suiteRunId: number,
   screenshotDir: string,
   onEvent: (event: SuiteStepEvent) => void,
+  signal?: AbortSignal,
 ) => Promise<ReplayResult>;
 
 const aborted = (reason: unknown): Error =>
@@ -173,6 +174,7 @@ export class SuiteRunner {
         suiteRun.id,
         join(suiteScreenshotDir, String(test.id)),
         (event) => onEvent?.({ ...event, suiteRunId: suiteRun.id }),
+        signal,
       );
       onEvent?.({
         type: "test-done",
@@ -220,7 +222,7 @@ export class SuiteRunner {
     return done;
   }
 
-  private defaultRunTest: RunTestFn = async (test, suiteRunId, screenshotDir, onEvent) => {
+  private defaultRunTest: RunTestFn = async (test, suiteRunId, screenshotDir, onEvent, signal) => {
     const handle = await this.options.launch();
     try {
       const runner = new ReplayRunner(handle.page);
@@ -229,6 +231,7 @@ export class SuiteRunner {
         healer: this.options.healer,
         completionHint: test.completionHint ?? undefined,
         suiteRunId,
+        signal,
         onEvent: (event) => {
           if (event.type !== "step") return;
           onEvent({

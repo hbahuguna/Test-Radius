@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { listSuiteRunsPage, type QfSuiteRunSummary } from "@/lib/queryfirst-api";
 import { RefreshCw } from "lucide-react";
 import { PagedRunList } from "./PagedRunList";
+import { RunningBanner } from "./RunningBanner";
 import { RunStatusBadge } from "./RunStatusBadge";
 import { fmtDuration, fmtTime } from "./format";
 import { SuiteRunDetailView } from "./SuiteRunDetailView";
@@ -88,7 +89,13 @@ function SuiteRunList({ onOpenSuite }: { onOpenSuite: (suiteRunId: number) => vo
           </Button>
         </CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-2">
+        <RunningBanner
+          onFinished={() => {
+            setLoading(true);
+            loadPage(0, false);
+          }}
+        />
         <PagedRunList
           rows={runs}
           hasMore={hasMore}

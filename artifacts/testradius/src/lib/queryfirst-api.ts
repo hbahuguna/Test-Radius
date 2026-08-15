@@ -263,6 +263,16 @@ export async function stopRun(): Promise<{ ok: boolean }> {
   return authedFetch<{ ok: boolean }>("/stop", { method: "POST" });
 }
 
+export interface QfActiveRun {
+  kind: "suite" | "train";
+  entityId: number;
+  name: string;
+}
+
+export async function getActiveRun(): Promise<{ active: QfActiveRun | null }> {
+  return authedFetch<{ active: QfActiveRun | null }>("/active-run");
+}
+
 // ----- SSE streaming ---------------------------------------------------------
 
 interface StreamCallbacks {

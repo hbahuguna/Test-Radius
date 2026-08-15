@@ -927,4 +927,84 @@ describe("ReplayRunner self-heal (Epic QF-64)", () => {
     expect(healer.calls).toBe(1);
     expect(result.selfHealed).toBe(1);
   });
+
+  // ── Abort signal: kill a hung run promptly ────────────────────────────────
+
+  it("aborts a hung wait condition promptly when the signal fires", async () => {
+    const store = makeStore();
+    const page = new FakePage();
+    page.pageSignatureValue = "never";
+    const test = makeTest(store, [
+      makeStep({
+        action: "wait",
+        selector: null,
+        locators: [],
+        waitCondition: { kind: "signature", hash: "sig1", timeoutMs: 60_000, pollMs: 50 },
+      }),
+    ]);
+    const controller = new AbortController();
+    const t0 = Date.now();
+    const pending = new ReplayRunner(page as unknown as Page).runTest(store, test, {
+      timeoutMs: 60_000,
+      pollMs: 50,
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(new Error("Stopped by user")), 50);
+    const result = await pending;
+
+    expect(Date.now() - t0).toBeLessThan(5_000);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Stopped by user");
+    const run = store.getRunWithSteps(result.runId)!;
+    expect(run.status).toBe("failed");
+  });
+
+  it("aborts an element-resolution poll when the signal fires", async () => {
+    const store = makeStore();
+    const page = new FakePage();
+    page.resolveResult = { ...page.resolveResult, found: false, selector: null };
+    page.resolveFailTimes = Number.POSITIVE_INFINITY;
+    const test = makeTest(store, [makeStep({ action: "click" })]);
+    const controller = new AbortController();
+    const t0 = Date.now();
+    const pending = new ReplayRunner(page as unknown as Page).runTest(store, test, {
+      retryDelayMs: 10,
+      resolveTimeoutMs: 60_000,
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(new Error("Stopped by user")), 50);
+    const result = await pending;
+
+    expect(Date.now() - t0).toBeLessThan(5_000);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Stopped by user");
+  });
+
+  it("runs no further steps once aborted", async () => {
+    const store = makeStore();
+    const page = new FakePage();
+    page.pageSignatureValue = "never";
+    const test = makeTest(store, [
+      makeStep({ action: "click" }),
+      makeStep({
+        action: "wait",
+        selector: null,
+        locators: [],
+        waitCondition: { kind: "signature", hash: "sig1", timeoutMs: 60_000, pollMs: 50 },
+      }),
+      makeStep({ action: "click" }),
+    ]);
+    const controller = new AbortController();
+    const pending = new ReplayRunner(page as unknown as Page).runTest(store, test, {
+      timeoutMs: 60_000,
+      pollMs: 50,
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(new Error("Stopped by user")), 60);
+    const result = await pending;
+
+    expect(result.success).toBe(false);
+    // Only the first (instant) click executed; the second never ran.
+    expect(page.clicks).toEqual(['text="Create account"']);
+  });
 });

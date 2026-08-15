@@ -73,6 +73,12 @@ export interface ReplayOptions {
    * the created `runs` row so member runs can be grouped per suite execution.
    */
   suiteRunId?: number;
+  /**
+   * Abort signal that cancels a hung run promptly: element-resolution polling,
+   * wait conditions and visible-waits all bail out as soon as the signal is
+   * aborted (instead of waiting out their timeout), and no further steps run.
+   */
+  signal?: AbortSignal;
 }
 
 export interface ReplayStepResult {
@@ -118,7 +124,33 @@ export function applyVariables(
   return map;
 }
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (signal) signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, Math.max(0, ms));
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+
+const abortMessage = (signal: AbortSignal | undefined): string =>
+  signal?.aborted
+    ? signal.reason instanceof Error
+      ? signal.reason.message
+      : String(signal.reason)
+    : "Run aborted";
+
+const throwIfAborted = (signal: AbortSignal | undefined): void => {
+  if (signal?.aborted) throw new ReplayError(abortMessage(signal));
+};
 
 /**
  * Assign a priority score to a locator for replay ordering.
@@ -181,7 +213,7 @@ export class ReplayRunner {
 
     const retryDelayMs = options.retryDelayMs ?? 200;
     const resolveTimeoutMs = options.resolveTimeoutMs ?? 8_000;
-    const runOpts = { timeoutMs, pollMs, retryDelayMs, resolveTimeoutMs, healer: options.healer };
+    const runOpts = { timeoutMs, pollMs, retryDelayMs, resolveTimeoutMs, healer: options.healer, signal: options.signal };
 
     for (let i = 0; i < steps.length; i++) {
       // ── Completion-hint short-circuit ──────────────────────────────────────
@@ -228,6 +260,7 @@ export class ReplayRunner {
       const step = steps[i];
       const intent = stepToEnglish(step);
       try {
+        throwIfAborted(options.signal);
         const exec = await this.executeStep(step, valueMap, slotNameByDefault, extracted, runOpts);
 
         // Optional step whose element was absent — record as "skipped" and
@@ -324,7 +357,7 @@ export class ReplayRunner {
     valueMap: Map<string, string>,
     slotNameByDefault: Map<string, string>,
     extracted: Record<string, string>,
-    opts: { timeoutMs: number; pollMs: number; retryDelayMs: number; resolveTimeoutMs: number; healer?: StepHealer },
+    opts: { timeoutMs: number; pollMs: number; retryDelayMs: number; resolveTimeoutMs: number; healer?: StepHealer; signal?: AbortSignal },
   ): Promise<{ detail: unknown; healed?: HealResult; skipped?: true }> {
     switch (step.action) {
       case "navigate": {
@@ -340,7 +373,8 @@ export class ReplayRunner {
           // Only skip on a verified locator-miss (ReplayError from resolveWithHeal).
           // Other errors — EvaluationError, WaitTimeoutError, NavigationError — are
           // real operational failures and must propagate even on optional steps.
-          if (step.optional && err instanceof ReplayError) {
+          // A user abort is also a real failure, not a skippable miss.
+          if (step.optional && err instanceof ReplayError && !opts.signal?.aborted) {
             return { detail: { reason: "optional element not present" }, skipped: true };
           }
           throw err;
@@ -355,7 +389,7 @@ export class ReplayRunner {
         try {
           resolved = await this.resolveWithHeal(step, opts);
         } catch (err) {
-          if (step.optional && err instanceof ReplayError) {
+          if (step.optional && err instanceof ReplayError && !opts.signal?.aborted) {
             return { detail: { reason: "optional element not present" }, skipped: true };
           }
           throw err;
@@ -371,7 +405,7 @@ export class ReplayRunner {
         try {
           resolved = await this.resolveWithHeal(step, opts);
         } catch (err) {
-          if (step.optional && err instanceof ReplayError) {
+          if (step.optional && err instanceof ReplayError && !opts.signal?.aborted) {
             return { detail: { reason: "optional element not present" }, skipped: true };
           }
           throw err;
@@ -396,7 +430,7 @@ export class ReplayRunner {
         try {
           resolved = await this.resolveWithHeal(step, opts);
         } catch (err) {
-          if (step.optional && err instanceof ReplayError) {
+          if (step.optional && err instanceof ReplayError && !opts.signal?.aborted) {
             return { detail: { reason: "optional element not present" }, skipped: true };
           }
           throw err;
@@ -523,7 +557,7 @@ export class ReplayRunner {
 
   private async resolveWithHeal(
     step: Step,
-    opts: { retryDelayMs: number; resolveTimeoutMs: number; healer?: StepHealer },
+    opts: { retryDelayMs: number; resolveTimeoutMs: number; healer?: StepHealer; signal?: AbortSignal },
   ): Promise<{
     selector: string;
     fingerprintMatch: boolean;
@@ -556,8 +590,9 @@ export class ReplayRunner {
     }
 
     while (Date.now() < resolveDeadline) {
+      throwIfAborted(opts.signal);
       const remaining = resolveDeadline - Date.now();
-      await sleep(Math.min(opts.retryDelayMs, remaining));
+      await sleep(Math.min(opts.retryDelayMs, remaining), opts.signal);
       const next = await this.tryResolve(step);
       if (next) {
         if (matchesBaseline(next)) return { ...next, healed: null };
@@ -585,6 +620,7 @@ export class ReplayRunner {
     // locator (e.g. an `id` survived while the testid was renamed), so the
     // cached locators/fingerprint/wait-condition are stale and must be refreshed.
     const healed = await opts.healer.heal(step, this.page);
+    throwIfAborted(opts.signal);
     if (!healed) throw missError();
 
     const locators = healed.locators;
@@ -705,7 +741,7 @@ export class ReplayRunner {
 
   private async waitCondition(
     wc: WaitCondition | null,
-    opts: { timeoutMs: number; pollMs: number },
+    opts: { timeoutMs: number; pollMs: number; signal?: AbortSignal },
   ): Promise<void> {
     if (!wc) return;
     const timeoutMs = wc.timeoutMs ?? opts.timeoutMs;
@@ -718,6 +754,7 @@ export class ReplayRunner {
       case "url": {
         const contains = (wc.contains ?? "").replace(/\/+$/, "");
         for (;;) {
+          throwIfAborted(opts.signal);
           const url = (await this.page.getUrl()).replace(/\/+$/, "");
           if (url.includes(contains)) return;
           if (!remaining()) {
@@ -725,19 +762,20 @@ export class ReplayRunner {
               `Timed out waiting for url containing "${contains}"`,
             );
           }
-          await sleep(pollMs);
+          await sleep(pollMs, opts.signal);
         }
       }
       case "element": {
         const ref = wc.ref;
         if (!ref) return;
         for (;;) {
+          throwIfAborted(opts.signal);
           const visible = await this.page.evaluate(elementIsVisible, ref);
           if (visible) return;
           if (!remaining()) {
             throw new WaitTimeoutError(`Timed out waiting for "${ref}" visible`);
           }
-          await sleep(pollMs);
+          await sleep(pollMs, opts.signal);
         }
       }
       case "signature": {
@@ -746,6 +784,7 @@ export class ReplayRunner {
         const before = wc.before;
         if (before !== undefined && before === hash) return; // action didn't change the page
         for (;;) {
+          throwIfAborted(opts.signal);
           const sig = await this.page.pageSignature();
           if (sig === hash) return;
           // browser-use never demands an exact snapshot: it performs the action
@@ -759,7 +798,7 @@ export class ReplayRunner {
               `Timed out waiting for page signature ${hash}`,
             );
           }
-          await sleep(pollMs);
+          await sleep(pollMs, opts.signal);
         }
       }
       case "manual":
@@ -776,11 +815,12 @@ export class ReplayRunner {
   private async waitForVisible(
     selector: string,
     step: Step,
-    opts: { timeoutMs: number; pollMs: number },
+    opts: { timeoutMs: number; pollMs: number; signal?: AbortSignal },
   ): Promise<void> {
     const deadline = Date.now() + opts.timeoutMs;
     const label = step.locators?.join(", ") ?? selector;
     for (;;) {
+      throwIfAborted(opts.signal);
       const visible = await this.page.evaluate(elementIsVisible, selector);
       if (visible) return;
       if (Date.now() >= deadline) {
@@ -788,7 +828,7 @@ export class ReplayRunner {
           `Timed out waiting for "${label}" visible before ${step.action}`,
         );
       }
-      await sleep(opts.pollMs);
+      await sleep(opts.pollMs, opts.signal);
     }
   }
 

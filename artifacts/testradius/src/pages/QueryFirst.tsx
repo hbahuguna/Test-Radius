@@ -708,8 +708,14 @@ const actionBadgeClass = (action: string) => {
         </div>
         )}
 
-        {activeTab === "suites" && <SuitesPanel />}
-        {activeTab === "trains" && <TrainsPanel />}
+        {/* Suites & Trains panels stay mounted so an in-flight run keeps streaming
+            (and stays visible) when the user switches tabs. */}
+        <div className={activeTab === "suites" ? "" : "hidden"}>
+          <SuitesPanel />
+        </div>
+        <div className={activeTab === "trains" ? "" : "hidden"}>
+          <TrainsPanel />
+        </div>
 
         {activeTab === "reports" && (
           <div className="space-y-4">

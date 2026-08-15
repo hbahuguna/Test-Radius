@@ -12,6 +12,7 @@ import {
   listSuites,
   listTests,
   startSuiteRun,
+  stopRun,
   updateSuiteTests,
   type QfEvent,
   type QfMode,
@@ -165,8 +166,13 @@ export function SuitesPanel() {
     }
   };
 
-  const handleStop = () => {
-    abortRef.current?.abort();
+  const handleStop = async () => {
+    try {
+      await stopRun();
+      refresh();
+    } catch {
+      /* ignore */
+    }
   };
 
   const handleDelete = async (suite: QfSuite) => {
@@ -278,7 +284,7 @@ export function SuitesPanel() {
                           ))}
                         </div>
                         <Button variant="destructive" size="sm" className="text-xs h-7" onClick={handleStop}>
-                          <Square className="size-3 mr-1" /> Stop (after current test)
+                          <Square className="size-3 mr-1" /> Stop
                         </Button>
                       </div>
                     )}

@@ -83,6 +83,8 @@ function getActive(userId: string): ActiveRun {
 interface ActiveBatchRun {
   controller: AbortController;
   kind: "suite" | "train";
+  entityId: number;
+  name: string;
 }
 const batchRuns = new Map<string, ActiveBatchRun>();
 
@@ -360,6 +362,14 @@ router.post("/stop", async (req: Request, res: Response) => {
     batch.controller.abort(new Error("Stopped by user"));
   }
   res.json({ ok: true });
+});
+
+// GET /queryfirst/active-run — the user's currently running suite/train run (if any)
+router.get("/active-run", async (req: Request, res: Response) => {
+  const batch = getBatch(req.user!.id);
+  res.json({
+    active: batch ? { kind: batch.kind, entityId: batch.entityId, name: batch.name } : null,
+  });
 });
 
 // POST /queryfirst/record — SSE: record a new test using browser-use agent + shadow CDP recorder
@@ -1232,7 +1242,7 @@ router.post("/suites/:id/run", async (req: Request, res: Response) => {
   }
 
   const controller = new AbortController();
-  batchRuns.set(authUser.id, { controller, kind: "suite" });
+  batchRuns.set(authUser.id, { controller, kind: "suite", entityId: suiteId, name: suite.name });
   sseHeaders(res);
   sseWrite(res, { event: "started", kind: "suite", suiteId, suiteName: suite.name });
 
@@ -1450,7 +1460,7 @@ router.post("/trains/:id/run", async (req: Request, res: Response) => {
   }
 
   const controller = new AbortController();
-  batchRuns.set(authUser.id, { controller, kind: "train" });
+  batchRuns.set(authUser.id, { controller, kind: "train", entityId: trainId, name: train.name });
   sseHeaders(res);
   sseWrite(res, { event: "started", kind: "train", trainId, trainName: train.name });
 
