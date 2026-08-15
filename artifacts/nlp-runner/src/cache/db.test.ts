@@ -125,7 +125,7 @@ describe("QF-29 db init + WAL + migrations", () => {
 });
 
 describe("QF-30 schema", () => {
-  it("creates all 7 tables with the planned schema", () => {
+  it("creates all tables with the planned schema", () => {
     const db = openDb(makeTempDir());
     expect(tableNames(db).sort()).toEqual(
       [
@@ -136,6 +136,12 @@ describe("QF-30 schema", () => {
         "run_steps",
         "test_versions",
         "site_memory",
+        "suites",
+        "suite_tests",
+        "suite_runs",
+        "trains",
+        "train_suites",
+        "train_runs",
       ].sort(),
     );
   });
@@ -363,4 +369,38 @@ describe("QF-31 data-access layer", () => {
   it("uses SCHEMA_VERSION matching the migration count", () => {
     expect(SCHEMA_VERSION).toBe(MIGRATIONS.length);
   });
+
+  it("adds parallel columns to suite_tests and train_suites in v5", () => {
+    const dir = makeTempDir();
+    const db = openDb(dir);
+    const store = new DataStore(db);
+
+    // migration v5 should have added `parallel` to both membership tables
+    const suiteCols = columnsOf(db, "suite_tests").map((c) => c.name);
+    expect(suiteCols).toContain("parallel");
+
+    const trainSuiteCols = columnsOf(db, "train_suites").map((c) => c.name);
+    expect(trainSuiteCols).toContain("parallel");
+
+    // verify it round-trips through the store
+    const [t] = seedSuiteMembers(store);
+    const suite = store.createSuite({ name: "S" });
+    store.setSuiteTests(suite.id, [{ testId: t, parallel: true }]);
+    const loaded = store.getSuiteWithTests(suite.id)!;
+    expect(loaded.tests[0].parallel).toBe(true);
+  });
 });
+
+function seedSuiteMembers(store: DataStore): number[] {
+  return ["X"].map((name) =>
+    store.saveTest({
+      name,
+      source: "recorder",
+      entryUrl: "https://example.test",
+      stepHash: `h-${name}`,
+      query: name,
+      steps: [{ action: "navigate", value: "https://example.test", selector: null }],
+      slots: [],
+    }).id,
+  );
+}

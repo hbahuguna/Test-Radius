@@ -29,7 +29,7 @@ export { LLMStepHealer, HealError } from "./replay/heal.js";
 export type { StepHealer, HealResult } from "./replay/heal.js";
 export { main as cliMain, parseRunArgs, resolveRunTarget, parseBrowseArgs, runBrowse } from "./cli.js";
 export { stepToEnglish, describeLocator, renderChecklist } from "./util/describe.js";
-export { resolveChromePath } from "./browser/launch.js";
+export { resolveChromePath } from "./config.js";
 export type { RunCommandArgs, BrowseCommandArgs, BrowseEvent } from "./cli.js";
 export type {
   Assertion,
@@ -38,8 +38,13 @@ export type {
   NewSiteMemory,
   NewSlot,
   NewStep,
+  NewSuite,
+  NewSuiteTest,
   NewTest,
   NewTestVersion,
+  NewTrain,
+  NewTrainRun,
+  NewSuiteRun,
   Run,
   RunStep,
   RunStatus,
@@ -50,10 +55,20 @@ export type {
   SlotKind,
   Step,
   StepAction,
+  Suite,
+  SuiteMode,
+  SuiteRun,
+  SuiteRunWithRuns,
+  SuiteTest,
+  SuiteWithTests,
   Test,
   TestSource,
   TestVersion,
   TestWithSteps,
+  Train,
+  TrainRun,
+  TrainSuite,
+  TrainWithSuites,
   WaitCondition,
 } from "./cache/types.js";
 export * from "./config.js";
@@ -68,6 +83,35 @@ export {
   parseDevToolsUrl,
 } from "./browser/launch.js";
 export type { LaunchedBrowser, LaunchOptions } from "./browser/launch.js";
+export {
+  MAX_NAME_CHARS,
+  MAX_NAME_WORDS,
+  summarizeTestName,
+  summarizeTestNameFallback,
+  uniqueTestName,
+} from "./util/test-name.js";
+export { mapWithConcurrency, Semaphore, type Settled } from "./util/concurrency.js";
+export {
+  SuiteRunner,
+  TrainRunner,
+  resolveMode,
+  type RunSuiteInput,
+  type RunTestFn,
+  type RunTrainInput,
+  type SuiteRunnerOptions,
+  type BrowserHandle,
+  type SuiteRunnerEvent,
+  type SuiteStepEvent,
+  type SuiteTestDoneEvent,
+  type SuiteDoneEvent,
+  type TrainRunnerEvent,
+  type TrainStepEvent,
+  type TrainTestDoneEvent,
+  type TrainSuiteDoneEvent,
+  type TrainSuiteStartEvent,
+  type TrainDoneEvent,
+  type StepStatus,
+} from "./suite/runner.js";
 
 // Live agent (PLAN-live-agent.md Phases 1–4).
 export { LiveAgent } from "./live/agent.js";

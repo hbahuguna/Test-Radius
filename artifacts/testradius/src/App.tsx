@@ -14,7 +14,7 @@ import { Settings } from "./pages/Settings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { StagehandAgent } from "./pages/StagehandAgent";
 import { BrowserAgent } from "./pages/BrowserAgent";
-import { QueryFirstDemo } from "./pages/QueryFirstDemo";
+import { QueryFirst } from "./pages/QueryFirst";
 
 function App() {
   return (
@@ -74,9 +74,9 @@ function App() {
           <BrowserAgent />
         </ProtectedRoute>
       </Route>
-      <Route path="/queryfirst-demo">
+      <Route path="/queryfirst">
         <ProtectedRoute>
-          <QueryFirstDemo />
+          <QueryFirst />
         </ProtectedRoute>
       </Route>
       <Route path="/stagehand-agent">

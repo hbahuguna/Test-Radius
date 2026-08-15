@@ -120,6 +120,8 @@ export interface Run {
   startedAt: string;
   finishedAt: string | null;
   error: unknown | null;
+  /** Grouping key for suite execution (nullable for standalone runs). */
+  suiteRunId: number | null;
 }
 
 export interface NewRun {
@@ -128,6 +130,7 @@ export interface NewRun {
   llmCalls?: number;
   startedAt?: string;
   error?: unknown | null;
+  suiteRunId?: number | null;
 }
 
 export type RunStepStatus = "passed" | "failed" | "skipped";
@@ -192,4 +195,120 @@ export interface TestWithSteps extends Test {
 
 export interface RunWithSteps extends Run {
   steps: RunStep[];
+}
+
+// ----- suites & trains --------------------------------------------------------
+
+/** Execution mode of a run; "mixed" when some members run parallel and others sequential. */
+export type SuiteMode = "sequential" | "parallel" | "mixed";
+
+export interface Suite {
+  id: number;
+  name: string;
+  description: string | null;
+  mode: SuiteMode;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NewSuite {
+  name: string;
+  description?: string | null;
+  mode?: SuiteMode;
+}
+
+export interface NewSuiteTest {
+  testId: number;
+  position: number;
+  /** Run this test concurrently with other parallel members (default sequential). */
+  parallel?: boolean;
+}
+
+export interface SuiteTest {
+  id: number;
+  suiteId: number;
+  testId: number;
+  position: number;
+  parallel: boolean;
+}
+
+export interface SuiteWithTests extends Suite {
+  tests: SuiteTest[];
+}
+
+export interface Train {
+  id: number;
+  name: string;
+  description: string | null;
+  mode: SuiteMode;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NewTrain {
+  name: string;
+  description?: string | null;
+  mode?: SuiteMode;
+}
+
+export interface NewTrainSuite {
+  suiteId: number;
+  position: number;
+  /** Run this suite concurrently with other parallel members (default sequential). */
+  parallel?: boolean;
+}
+
+export interface TrainSuite {
+  id: number;
+  trainId: number;
+  suiteId: number;
+  position: number;
+  parallel: boolean;
+}
+
+export interface TrainWithSuites extends Train {
+  suites: TrainSuite[];
+}
+
+export interface SuiteRun {
+  id: number;
+  suiteId: number;
+  trainRunId: number | null;
+  status: RunStatus;
+  mode: SuiteMode;
+  startedAt: string;
+  finishedAt: string | null;
+  error: unknown | null;
+}
+
+export interface NewSuiteRun {
+  suiteId: number;
+  status: RunStatus;
+  mode: SuiteMode;
+  startedAt?: string;
+  error?: unknown | null;
+  trainRunId?: number | null;
+}
+
+export interface TrainRun {
+  id: number;
+  trainId: number;
+  status: RunStatus;
+  mode: SuiteMode;
+  startedAt: string;
+  finishedAt: string | null;
+  error: unknown | null;
+}
+
+export interface NewTrainRun {
+  trainId: number;
+  status: RunStatus;
+  mode: SuiteMode;
+  startedAt?: string;
+  error?: unknown | null;
+}
+
+/** A suite run with its member test runs. */
+export interface SuiteRunWithRuns extends SuiteRun {
+  runs: Run[];
 }

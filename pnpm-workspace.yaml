@@ -6,9 +6,12 @@ packages:
 
 allowBuilds:
   '@google/genai': true
+  better-sqlite3: true
   bufferutil: true
   esbuild: true
+  onnxruntime-node: true
   protobufjs: true
+  sharp: true
 
 autoInstallPeers: false
 
@@ -74,11 +77,17 @@ minimumReleaseAgeExclude:
 
 onlyBuiltDependencies:
   - '@swc/core'
+  - better-sqlite3
   - esbuild
   - msw
+  - onnxruntime-node
+  - sharp
   - unrs-resolver
 
 overrides:
+  # onnxruntime-node >= 1.21 dropped darwin-x64 bindings (Intel Mac); 1.20.1
+  # still ships them. transformers.js works fine with this version.
+  onnxruntime-node: 1.20.1
   # replit uses linux-x64 only, we can exclude all other platforms
   # drizzle-kit uses esbuild internally on an older version that's vulnerable, this overrides it
   "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0"

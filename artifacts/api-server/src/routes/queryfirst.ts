@@ -1,4 +1,6 @@
 import { Router, type IRouter, type Request, type Response } from "express";
+import { existsSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { db } from "@workspace/db";
 import { userApiKeysTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
@@ -16,6 +18,11 @@ import {
   LiveAgent,
   ChromeLaunchError,
   stepToEnglish,
+  SuiteRunner,
+  TrainRunner,
+  resolveMode,
+  summarizeTestName,
+  uniqueTestName,
   type ReplayEvent,
   type BrowseAgentEvent,
   type Page,
@@ -24,6 +31,8 @@ import {
   type NewSlot,
   type TestSource,
   type RecordedStep,
+  type SuiteRunnerEvent,
+  type TrainRunnerEvent,
 } from "@workspace/nlp-runner";
 
 const CHROME_WARMING_UP_MSG =
@@ -66,6 +75,21 @@ function getActive(userId: string): ActiveRun {
     activeRuns.set(userId, r);
   }
   return r;
+}
+
+// ----- batch run registry (suite/train runs — one per user) -------------------
+interface ActiveBatchRun {
+  controller: AbortController;
+  kind: "suite" | "train";
+}
+const batchRuns = new Map<string, ActiveBatchRun>();
+
+function getBatch(userId: string): ActiveBatchRun | null {
+  return batchRuns.get(userId) ?? null;
+}
+
+function clearBatch(userId: string): void {
+  batchRuns.delete(userId);
 }
 
 // ----- LLM config resolution -----------------------------------------------
@@ -148,13 +172,19 @@ async function captureScreenshot(page: Page | null): Promise<string | null> {
 
 // ----- DB singleton ---------------------------------------------------------
 let _store: DataStore | null = null;
+function qfDataDir(): string {
+  return process.env.QF_DATA_DIR ?? `${process.env.HOME ?? ""}/.queryfirst`;
+}
 function getStore(): DataStore {
   if (!_store) {
-    const dataDir = process.env.QF_DATA_DIR ?? `${process.env.HOME ?? ""}/.queryfirst`;
-    const db2 = openDatabase(dataDir);
+    const db2 = openDatabase(qfDataDir());
     _store = new DataStore(db2);
   }
   return _store;
+}
+
+function suiteScreenshotsDir(): string {
+  return join(qfDataDir(), "screenshots");
 }
 
 // ----- routes ----------------------------------------------------------------
@@ -302,6 +332,10 @@ router.post("/stop", async (req: Request, res: Response) => {
   } catch { /* ignore */ }
   active.session = null;
   active.page = null;
+  const batch = getBatch(req.user!.id);
+  if (batch) {
+    batch.controller.abort(new Error("Stopped by user"));
+  }
   res.json({ ok: true });
 });
 
@@ -337,6 +371,18 @@ router.post("/record", async (req: Request, res: Response) => {
   sseWrite(res, { event: "started", kind: "record" });
 
   const store = getStore();
+
+  // Summarize the recording query into a unique, permanent test name (LLM with
+  // heuristic fallback). Numeric id remains the canonical identifier.
+  const nameLlm = new OpenAIChatClient({
+    baseUrl: llmCfg.baseUrl,
+    apiKey: llmCfg.apiKey,
+    model: llmCfg.model,
+  });
+  const generatedName = uniqueTestName(
+    store.listTestNames(),
+    await summarizeTestName(nameLlm, query),
+  );
 
   let browserSession: BrowserInstance | null = null;
   let recorder: ShadowRecorder | null = null;
@@ -467,7 +513,7 @@ router.post("/record", async (req: Request, res: Response) => {
           }));
 
           const saved = store.saveTest({
-            name: query.slice(0, 80),
+            name: generatedName,
             source: "recorder",
             entryUrl: result.entryUrl || entry_url || "",
             stepHash: result.stepHash,
@@ -484,6 +530,7 @@ router.post("/record", async (req: Request, res: Response) => {
             event: "done",
             ok: gateResult.success,
             testId: gateResult.success ? saved.id : undefined,
+            testName: generatedName,
             error: gateResult.success ? undefined : gateResult.error,
           });
           break runLoop;
@@ -507,7 +554,7 @@ router.post("/record", async (req: Request, res: Response) => {
     if (attached && recorder && !savedTestId) {
       const result = await recorder.finalize();
       const saved = store.saveTest({
-        name: query.slice(0, 80),
+        name: generatedName,
         source: "recorder",
         entryUrl: result.entryUrl || entry_url || "",
         stepHash: result.stepHash,
@@ -524,6 +571,7 @@ router.post("/record", async (req: Request, res: Response) => {
         event: "done",
         ok: gateResult.success,
         testId: gateResult.success ? saved.id : undefined,
+        testName: generatedName,
         error: gateResult.success ? undefined : gateResult.error,
       });
     }
@@ -725,7 +773,7 @@ router.post("/replay", async (req: Request, res: Response) => {
     active.session = browserSession;
     active.page = page;
 
-    // If an entry_url override is given (e.g. ?redesign=1 for heal demo), navigate there first
+    // If an entry_url override is given, navigate there first
     if (entry_url && typeof entry_url === "string") {
       await page.navigate(entry_url);
     }
@@ -781,6 +829,649 @@ router.post("/replay", async (req: Request, res: Response) => {
 });
 
 export default router;
+
+// ----- suites & trains -------------------------------------------------------
+
+function parseMode(v: unknown): "sequential" | "parallel" | null {
+  return v === "sequential" || v === "parallel" ? v : null;
+}
+
+function asIdList(raw: unknown): number[] | null {
+  if (!Array.isArray(raw)) return null;
+  const ids = raw.map(Number);
+  if (ids.some((n) => !Number.isInteger(n) || n <= 0)) return null;
+  return ids;
+}
+
+interface MemberInput {
+  id: number;
+  parallel: boolean;
+}
+
+/** Parse a members array: either `[{testId, parallel}]` or a bare `[id, …]`. */
+function parseMembers(raw: unknown, idKey: string): MemberInput[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: MemberInput[] = [];
+  for (const entry of raw) {
+    if (typeof entry === "number") {
+      if (!Number.isInteger(entry) || entry <= 0) return null;
+      out.push({ id: entry, parallel: false });
+      continue;
+    }
+    if (entry && typeof entry === "object") {
+      const id = Number((entry as Record<string, unknown>)[idKey]);
+      if (!Number.isInteger(id) || id <= 0) return null;
+      out.push({ id, parallel: (entry as Record<string, unknown>).parallel === true });
+      continue;
+    }
+    return null;
+  }
+  return out;
+}
+
+function suitePayload(store: DataStore, suiteId: number) {
+  const s = store.getSuiteWithTests(suiteId);
+  if (!s) return null;
+  return {
+    id: s.id,
+    name: s.name,
+    description: s.description,
+    mode: s.mode,
+    createdAt: s.createdAt,
+    updatedAt: s.updatedAt,
+    tests: s.tests.map((t) => {
+      const test = store.getTest(t.testId);
+      return {
+        suiteTestId: t.id,
+        testId: t.testId,
+        position: t.position,
+        parallel: t.parallel,
+        name: test?.name ?? `#${t.testId}`,
+      };
+    }),
+  };
+}
+
+function trainPayload(store: DataStore, trainId: number) {
+  const t = store.getTrainWithSuites(trainId);
+  if (!t) return null;
+  return {
+    id: t.id,
+    name: t.name,
+    description: t.description,
+    mode: t.mode,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+    suites: t.suites.map((s) => {
+      const suite = store.getSuite(s.suiteId);
+      return {
+        trainSuiteId: s.id,
+        suiteId: s.suiteId,
+        position: s.position,
+        parallel: s.parallel,
+        name: suite?.name ?? `#${s.suiteId}`,
+        mode: suite?.mode ?? null,
+      };
+    }),
+  };
+}
+
+function suiteRunPayload(store: DataStore, suiteRunId: number) {
+  const run = store.getSuiteRunWithRuns(suiteRunId);
+  if (!run) return null;
+  return {
+    id: run.id,
+    suiteId: run.suiteId,
+    trainRunId: run.trainRunId,
+    status: run.status,
+    mode: run.mode,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    error: run.error instanceof Error ? run.error.message : run.error,
+    runs: run.runs.map((r) => {
+      const test = store.getTest(r.testId);
+      return {
+        runId: r.id,
+        testId: r.testId,
+        name: test?.name ?? `#${r.testId}`,
+        status: r.status,
+        llmCalls: r.llmCalls,
+        startedAt: r.startedAt,
+        finishedAt: r.finishedAt,
+        error: r.error instanceof Error ? r.error.message : r.error,
+      };
+    }),
+  };
+}
+
+function trainRunPayload(store: DataStore, trainRunId: number) {
+  const run = store.getTrainRun(trainRunId);
+  if (!run) throw new Error(`No train run with id ${trainRunId}`);
+  const loaded = store.getTrainRunWithSuiteRuns(trainRunId);
+  return {
+    id: run.id,
+    trainId: run.trainId,
+    status: run.status,
+    mode: run.mode,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    error: run.error instanceof Error ? run.error.message : run.error,
+    suiteRuns: loaded.suiteRuns.map((sr) => suiteRunPayload(store, sr.id)),
+  };
+}
+
+function listSuiteScreenshots(suiteRunId: number): string[] {
+  const root = join(suiteScreenshotsDir(), String(suiteRunId));
+  if (!existsSync(root)) return [];
+  return (readdirSync(root, { recursive: true }) as string[])
+    .filter((f) => /\.png$/i.test(f))
+    .sort();
+}
+
+// GET /queryfirst/suites — list all suites
+router.get("/suites", async (_req: Request, res: Response) => {
+  try {
+    const store = getStore();
+    res.json({ suites: store.listSuites().map((s) => suitePayload(store, s.id)) });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: list suites failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to list suites" });
+  }
+});
+
+// POST /queryfirst/suites — create a suite (optionally with member tests)
+router.post("/suites", async (req: Request, res: Response) => {
+  try {
+    const { name, description, mode, testIds, tests } = req.body ?? {};
+    if (!name || typeof name !== "string") {
+      res.status(400).json({ error: "invalid_request", message: "name is required" });
+      return;
+    }
+    const m = parseMode(mode);
+    if (m === null && mode !== undefined) {
+      res.status(400).json({ error: "invalid_request", message: "mode must be sequential or parallel" });
+      return;
+    }
+    const members = tests !== undefined ? parseMembers(tests, "testId") : testIds !== undefined ? parseMembers(testIds, "testId") : [];
+    if (members === null) {
+      res.status(400).json({ error: "invalid_request", message: "tests/testIds must be an array of {testId, parallel?} or positive ids" });
+      return;
+    }
+    const store = getStore();
+    for (const mem of members) {
+      if (!store.getTest(mem.id)) {
+        res.status(400).json({ error: "invalid_request", message: `Test #${mem.id} not found` });
+        return;
+      }
+    }
+    const suite = store.createSuite({ name, description: description ?? null, mode: m ?? "sequential" });
+    if (members.length > 0) store.setSuiteTests(suite.id, members.map((mem) => ({ testId: mem.id, parallel: mem.parallel })));
+    res.status(201).json({ suite: suitePayload(store, suite.id) });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: create suite failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to create suite" });
+  }
+});
+
+// GET /queryfirst/suites/:id
+router.get("/suites/:id", async (req: Request, res: Response) => {
+  try {
+    const store = getStore();
+    const payload = suitePayload(store, Number(req.params.id));
+    if (!payload) {
+      res.status(404).json({ error: "not_found", message: `Suite #${req.params.id} not found` });
+      return;
+    }
+    res.json({ suite: payload });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: get suite failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to get suite" });
+  }
+});
+
+// PATCH /queryfirst/suites/:id
+router.patch("/suites/:id", async (req: Request, res: Response) => {
+  try {
+    const { name, description, mode } = req.body ?? {};
+    const m = parseMode(mode);
+    if (m === null && mode !== undefined) {
+      res.status(400).json({ error: "invalid_request", message: "mode must be sequential or parallel" });
+      return;
+    }
+    const store = getStore();
+    const id = Number(req.params.id);
+    if (!store.getSuite(id)) {
+      res.status(404).json({ error: "not_found", message: `Suite #${id} not found` });
+      return;
+    }
+    store.updateSuite(id, {
+      name: typeof name === "string" ? name : undefined,
+      description: description === undefined ? undefined : description,
+      mode: m ?? undefined,
+    });
+    res.json({ suite: suitePayload(store, id) });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: update suite failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to update suite" });
+  }
+});
+
+// DELETE /queryfirst/suites/:id
+router.delete("/suites/:id", async (req: Request, res: Response) => {
+  try {
+    const store = getStore();
+    const id = Number(req.params.id);
+    if (!store.getSuite(id)) {
+      res.status(404).json({ error: "not_found", message: `Suite #${id} not found` });
+      return;
+    }
+    store.deleteSuite(id);
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: delete suite failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to delete suite" });
+  }
+});
+
+// PUT /queryfirst/suites/:id/tests — replace member tests (order = position, per-member parallel flag)
+router.put("/suites/:id/tests", async (req: Request, res: Response) => {
+  try {
+    const { tests, testIds } = req.body ?? {};
+    const members = tests !== undefined ? parseMembers(tests, "testId") : testIds !== undefined ? parseMembers(testIds, "testId") : null;
+    if (members === null) {
+      res.status(400).json({ error: "invalid_request", message: "tests/testIds must be an array of {testId, parallel?} or positive ids" });
+      return;
+    }
+    const store = getStore();
+    const id = Number(req.params.id);
+    if (!store.getSuite(id)) {
+      res.status(404).json({ error: "not_found", message: `Suite #${id} not found` });
+      return;
+    }
+    for (const mem of members) {
+      if (!store.getTest(mem.id)) {
+        res.status(400).json({ error: "invalid_request", message: `Test #${mem.id} not found` });
+        return;
+      }
+    }
+    store.setSuiteTests(id, members.map((mem) => ({ testId: mem.id, parallel: mem.parallel })));
+    res.json({ suite: suitePayload(store, id) });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: set suite tests failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to set suite tests" });
+  }
+});
+
+// GET /queryfirst/suites/:id/runs — suite run history
+router.get("/suites/:id/runs", async (req: Request, res: Response) => {
+  try {
+    const store = getStore();
+    const id = Number(req.params.id);
+    if (!store.getSuite(id)) {
+      res.status(404).json({ error: "not_found", message: `Suite #${id} not found` });
+      return;
+    }
+    const runs = store.listSuiteRuns(id);
+    res.json({
+      runs: runs.map((r) => ({
+        id: r.id,
+        suiteId: r.suiteId,
+        status: r.status,
+        mode: r.mode,
+        startedAt: r.startedAt,
+        finishedAt: r.finishedAt,
+        error: r.error instanceof Error ? r.error.message : r.error,
+      })),
+    });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: list suite runs failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to list suite runs" });
+  }
+});
+
+// POST /queryfirst/suites/:id/run — SSE: run the suite (headless)
+router.post("/suites/:id/run", async (req: Request, res: Response) => {
+  const authUser = req.user!;
+  const suiteId = Number(req.params.id);
+  const store = getStore();
+  const suite = store.getSuiteWithTests(suiteId);
+  if (!suite) {
+    res.status(404).json({ error: "not_found", message: `Suite #${suiteId} not found` });
+    return;
+  }
+  if (getBatch(authUser.id)) {
+    sseHeaders(res);
+    sseWrite(res, { event: "error", message: "A suite/train run is already in progress. Stop it first." });
+    res.end();
+    return;
+  }
+
+  const controller = new AbortController();
+  batchRuns.set(authUser.id, { controller, kind: "suite" });
+  sseHeaders(res);
+  sseWrite(res, { event: "started", kind: "suite", suiteId, suiteName: suite.name });
+
+  const runner = new SuiteRunner(store, {
+    launch: async () => {
+      const s = await BrowserSession.launch({ headless: true, timeoutMs: 20_000 });
+      return { page: await s.newPage(), close: () => s.close() };
+    },
+    screenshotBaseDir: suiteScreenshotsDir(),
+    concurrency: 4,
+  });
+
+  try {
+    const suiteRun = await runner.runSuite(suiteId, {
+      signal: controller.signal,
+      onEvent: (event: SuiteRunnerEvent) => {
+        sseWrite(res, { event: "suite", ...event });
+      },
+    });
+    sseWrite(res, {
+      event: "done",
+      kind: "suite",
+      suiteRunId: suiteRun.id,
+      ok: suiteRun.status === "passed",
+      status: suiteRun.status,
+      error: suiteRun.error !== null ? String(suiteRun.error) : undefined,
+    });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: suite run failed");
+    sseWrite(res, { event: "error", message: err instanceof Error ? err.message : String(err) });
+  } finally {
+    clearBatch(authUser.id);
+  }
+  res.end();
+});
+
+// ----- trains ----------------------------------------------------------------
+
+// GET /queryfirst/trains — list all trains
+router.get("/trains", async (_req: Request, res: Response) => {
+  try {
+    const store = getStore();
+    res.json({ trains: store.listTrains().map((t) => trainPayload(store, t.id)) });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: list trains failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to list trains" });
+  }
+});
+
+// POST /queryfirst/trains — create a train (optionally with member suites)
+router.post("/trains", async (req: Request, res: Response) => {
+  try {
+    const { name, description, mode, suiteIds, suites } = req.body ?? {};
+    if (!name || typeof name !== "string") {
+      res.status(400).json({ error: "invalid_request", message: "name is required" });
+      return;
+    }
+    const m = parseMode(mode);
+    if (m === null && mode !== undefined) {
+      res.status(400).json({ error: "invalid_request", message: "mode must be sequential or parallel" });
+      return;
+    }
+    const members = suites !== undefined ? parseMembers(suites, "suiteId") : suiteIds !== undefined ? parseMembers(suiteIds, "suiteId") : [];
+    if (members === null) {
+      res.status(400).json({ error: "invalid_request", message: "suites/suiteIds must be an array of {suiteId, parallel?} or positive ids" });
+      return;
+    }
+    const store = getStore();
+    for (const mem of members) {
+      if (!store.getSuite(mem.id)) {
+        res.status(400).json({ error: "invalid_request", message: `Suite #${mem.id} not found` });
+        return;
+      }
+    }
+    const train = store.createTrain({ name, description: description ?? null, mode: m ?? "sequential" });
+    if (members.length > 0) store.setTrainSuites(train.id, members.map((mem) => ({ suiteId: mem.id, parallel: mem.parallel })));
+    res.status(201).json({ train: trainPayload(store, train.id) });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: create train failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to create train" });
+  }
+});
+
+// GET /queryfirst/trains/:id
+router.get("/trains/:id", async (req: Request, res: Response) => {
+  try {
+    const store = getStore();
+    const payload = trainPayload(store, Number(req.params.id));
+    if (!payload) {
+      res.status(404).json({ error: "not_found", message: `Train #${req.params.id} not found` });
+      return;
+    }
+    res.json({ train: payload });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: get train failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to get train" });
+  }
+});
+
+// PATCH /queryfirst/trains/:id
+router.patch("/trains/:id", async (req: Request, res: Response) => {
+  try {
+    const { name, description, mode } = req.body ?? {};
+    const m = parseMode(mode);
+    if (m === null && mode !== undefined) {
+      res.status(400).json({ error: "invalid_request", message: "mode must be sequential or parallel" });
+      return;
+    }
+    const store = getStore();
+    const id = Number(req.params.id);
+    if (!store.getTrain(id)) {
+      res.status(404).json({ error: "not_found", message: `Train #${id} not found` });
+      return;
+    }
+    store.updateTrain(id, {
+      name: typeof name === "string" ? name : undefined,
+      description: description === undefined ? undefined : description,
+      mode: m ?? undefined,
+    });
+    res.json({ train: trainPayload(store, id) });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: update train failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to update train" });
+  }
+});
+
+// DELETE /queryfirst/trains/:id
+router.delete("/trains/:id", async (req: Request, res: Response) => {
+  try {
+    const store = getStore();
+    const id = Number(req.params.id);
+    if (!store.getTrain(id)) {
+      res.status(404).json({ error: "not_found", message: `Train #${id} not found` });
+      return;
+    }
+    store.deleteTrain(id);
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: delete train failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to delete train" });
+  }
+});
+
+// PUT /queryfirst/trains/:id/suites — replace member suites (order = position, per-member parallel flag)
+router.put("/trains/:id/suites", async (req: Request, res: Response) => {
+  try {
+    const { suites, suiteIds } = req.body ?? {};
+    const members = suites !== undefined ? parseMembers(suites, "suiteId") : suiteIds !== undefined ? parseMembers(suiteIds, "suiteId") : null;
+    if (members === null) {
+      res.status(400).json({ error: "invalid_request", message: "suites/suiteIds must be an array of {suiteId, parallel?} or positive ids" });
+      return;
+    }
+    const store = getStore();
+    const id = Number(req.params.id);
+    if (!store.getTrain(id)) {
+      res.status(404).json({ error: "not_found", message: `Train #${id} not found` });
+      return;
+    }
+    for (const mem of members) {
+      if (!store.getSuite(mem.id)) {
+        res.status(400).json({ error: "invalid_request", message: `Suite #${mem.id} not found` });
+        return;
+      }
+    }
+    store.setTrainSuites(id, members.map((mem) => ({ suiteId: mem.id, parallel: mem.parallel })));
+    res.json({ train: trainPayload(store, id) });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: set train suites failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to set train suites" });
+  }
+});
+
+// GET /queryfirst/trains/:id/runs — train run history
+router.get("/trains/:id/runs", async (req: Request, res: Response) => {
+  try {
+    const store = getStore();
+    const id = Number(req.params.id);
+    if (!store.getTrain(id)) {
+      res.status(404).json({ error: "not_found", message: `Train #${id} not found` });
+      return;
+    }
+    const runs = store.listTrainRuns(id);
+    res.json({
+      runs: runs.map((r) => ({
+        id: r.id,
+        trainId: r.trainId,
+        status: r.status,
+        mode: r.mode,
+        startedAt: r.startedAt,
+        finishedAt: r.finishedAt,
+        error: r.error instanceof Error ? r.error.message : r.error,
+      })),
+    });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: list train runs failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to list train runs" });
+  }
+});
+
+// POST /queryfirst/trains/:id/run — SSE: run the train (headless)
+router.post("/trains/:id/run", async (req: Request, res: Response) => {
+  const authUser = req.user!;
+  const trainId = Number(req.params.id);
+  const store = getStore();
+  const train = store.getTrainWithSuites(trainId);
+  if (!train) {
+    res.status(404).json({ error: "not_found", message: `Train #${trainId} not found` });
+    return;
+  }
+  if (getBatch(authUser.id)) {
+    sseHeaders(res);
+    sseWrite(res, { event: "error", message: "A suite/train run is already in progress. Stop it first." });
+    res.end();
+    return;
+  }
+
+  const controller = new AbortController();
+  batchRuns.set(authUser.id, { controller, kind: "train" });
+  sseHeaders(res);
+  sseWrite(res, { event: "started", kind: "train", trainId, trainName: train.name });
+
+  const suiteRunner = new SuiteRunner(store, {
+    launch: async () => {
+      const s = await BrowserSession.launch({ headless: true, timeoutMs: 20_000 });
+      return { page: await s.newPage(), close: () => s.close() };
+    },
+    screenshotBaseDir: suiteScreenshotsDir(),
+    concurrency: 4,
+  });
+  const runner = new TrainRunner(store, suiteRunner);
+
+  try {
+    const trainRun = await runner.runTrain(trainId, {
+      signal: controller.signal,
+      onEvent: (event: TrainRunnerEvent) => {
+        sseWrite(res, { event: "train", ...event });
+      },
+    });
+    sseWrite(res, {
+      event: "done",
+      kind: "train",
+      trainRunId: trainRun.id,
+      ok: trainRun.status === "passed",
+      status: trainRun.status,
+      error: trainRun.error !== null ? String(trainRun.error) : undefined,
+    });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: train run failed");
+    sseWrite(res, { event: "error", message: err instanceof Error ? err.message : String(err) });
+  } finally {
+    clearBatch(authUser.id);
+  }
+  res.end();
+});
+
+// ----- run results & screenshots ---------------------------------------------
+
+// GET /queryfirst/suite-runs/:id — suite run with member test runs
+router.get("/suite-runs/:id", async (req: Request, res: Response) => {
+  try {
+    const store = getStore();
+    const payload = suiteRunPayload(store, Number(req.params.id));
+    if (!payload) {
+      res.status(404).json({ error: "not_found", message: `Suite run #${req.params.id} not found` });
+      return;
+    }
+    res.json({ suiteRun: payload });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: get suite run failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to get suite run" });
+  }
+});
+
+// GET /queryfirst/train-runs/:id — train run with nested suite runs
+router.get("/train-runs/:id", async (req: Request, res: Response) => {
+  try {
+    const store = getStore();
+    const id = Number(req.params.id);
+    if (!store.getTrainRun(id)) {
+      res.status(404).json({ error: "not_found", message: `Train run #${req.params.id} not found` });
+      return;
+    }
+    res.json({ trainRun: trainRunPayload(store, id) });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: get train run failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to get train run" });
+  }
+});
+
+// GET /queryfirst/suite-runs/:id/screenshots — list persisted step screenshots
+router.get("/suite-runs/:id/screenshots", async (req: Request, res: Response) => {
+  try {
+    const store = getStore();
+    const id = Number(req.params.id);
+    if (!store.getSuiteRun(id)) {
+      res.status(404).json({ error: "not_found", message: `Suite run #${req.params.id} not found` });
+      return;
+    }
+    const files = listSuiteScreenshots(id);
+    res.json({
+      screenshots: files.map((f) => ({
+        path: f,
+        url: `/api/queryfirst/suite-runs/${id}/screenshots/${f}`,
+      })),
+    });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: list suite screenshots failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to list suite screenshots" });
+  }
+});
+
+// GET /queryfirst/suite-runs/:id/screenshots/:testId/:file — serve a persisted screenshot
+router.get("/suite-runs/:id/screenshots/:testId/:file", async (req: Request, res: Response) => {
+  const suiteRunId = Number(req.params.id);
+  const testId = req.params.testId as string;
+  const file = req.params.file as string;
+  if (!/^[A-Za-z0-9._-]+$/.test(testId) || !/^[A-Za-z0-9._-]+$/.test(file)) {
+    res.status(400).json({ error: "invalid_path", message: "Invalid screenshot path" });
+    return;
+  }
+  const rel = `${testId}/${file}`;
+  const root = resolve(suiteScreenshotsDir(), String(suiteRunId));
+  res.sendFile(rel, { root });
+});
 
 // POST /queryfirst/browse — SSE: run the live agent on a free-form browsing task
 router.post("/browse", async (req: Request, res: Response) => {

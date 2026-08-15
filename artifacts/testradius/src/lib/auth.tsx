@@ -89,9 +89,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             console.log("[auth] me response:", res.status);
             if (res.status === 403) throw new Error("signup_required");
           }
-          // Successful auth → go to the Browser agent (primary engine).
-          console.log("[auth] navigating to /browser-agent");
-          navigate("/browser-agent");
+          // Successful auth → go to QueryFirst (primary engine).
+          console.log("[auth] navigating to /queryfirst");
+          navigate("/queryfirst");
         } catch (err) {
           console.log("[auth] post-signin flow rejected:", err);
           // Backend rejected (e.g. login without prior signup). Sign out and

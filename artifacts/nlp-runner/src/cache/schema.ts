@@ -113,6 +113,74 @@ export const MIGRATIONS: Migration[] = [
       `ALTER TABLE steps ADD COLUMN optional INTEGER NOT NULL DEFAULT 0`,
     ],
   },
+  {
+    version: 4,
+    name: "add-suites-and-trains",
+    sql: [
+      `CREATE TABLE suites (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        description TEXT,
+        mode TEXT NOT NULL DEFAULT 'sequential',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE TABLE suite_tests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        suite_id INTEGER NOT NULL REFERENCES suites(id) ON DELETE CASCADE,
+        test_id INTEGER NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        UNIQUE(suite_id, position)
+      )`,
+      `CREATE INDEX idx_suite_tests_suite_id ON suite_tests(suite_id)`,
+      `CREATE TABLE trains (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        description TEXT,
+        mode TEXT NOT NULL DEFAULT 'sequential',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE TABLE train_suites (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        train_id INTEGER NOT NULL REFERENCES trains(id) ON DELETE CASCADE,
+        suite_id INTEGER NOT NULL REFERENCES suites(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        UNIQUE(train_id, position)
+      )`,
+      `CREATE INDEX idx_train_suites_train_id ON train_suites(train_id)`,
+      `CREATE TABLE suite_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        suite_id INTEGER NOT NULL REFERENCES suites(id) ON DELETE CASCADE,
+        status TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        error_json TEXT
+      )`,
+      `CREATE INDEX idx_suite_runs_suite_id ON suite_runs(suite_id)`,
+      `CREATE TABLE train_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        train_id INTEGER NOT NULL REFERENCES trains(id) ON DELETE CASCADE,
+        status TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        error_json TEXT
+      )`,
+      `CREATE INDEX idx_train_runs_train_id ON train_runs(train_id)`,
+      `ALTER TABLE runs ADD COLUMN suite_run_id INTEGER REFERENCES suite_runs(id)`,
+      `ALTER TABLE suite_runs ADD COLUMN train_run_id INTEGER REFERENCES train_runs(id)`,
+    ],
+  },
+  {
+    version: 5,
+    name: "add-per-member-parallel",
+    sql: [
+      `ALTER TABLE suite_tests ADD COLUMN parallel INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE train_suites ADD COLUMN parallel INTEGER NOT NULL DEFAULT 0`,
+    ],
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;

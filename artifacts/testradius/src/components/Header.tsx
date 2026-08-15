@@ -41,7 +41,7 @@ export function Header({ scrollToForm }: HeaderProps) {
           </Link>
           {session ? (
             <>
-              <Link href="/queryfirst-demo">
+              <Link href="/queryfirst">
                 <Button variant="ghost" className="hidden sm:inline-flex">
                   QueryFirst
                 </Button>
@@ -62,9 +62,9 @@ export function Header({ scrollToForm }: HeaderProps) {
             </Button>
           )}
           {session ? (
-            <Link href="/browser-agent">
+            <Link href="/queryfirst">
               <Button className="font-medium shadow-sm hover:shadow-md transition-all">
-                Go to Agent
+                Go to QueryFirst
               </Button>
             </Link>
           ) : location === "/login" ? (

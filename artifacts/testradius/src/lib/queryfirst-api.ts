@@ -47,6 +47,84 @@ export interface QfRun {
   error: string | null;
 }
 
+export type QfMode = "sequential" | "parallel" | "mixed";
+
+export interface QfSuiteTest {
+  suiteTestId: number;
+  testId: number;
+  position: number;
+  parallel: boolean;
+  name: string;
+}
+
+export interface QfSuite {
+  id: number;
+  name: string;
+  description: string | null;
+  mode: QfMode;
+  createdAt: string;
+  updatedAt: string;
+  tests: QfSuiteTest[];
+}
+
+export interface QfTrainSuite {
+  trainSuiteId: number;
+  suiteId: number;
+  position: number;
+  parallel: boolean;
+  name: string;
+  mode: QfMode | null;
+}
+
+export interface QfTrain {
+  id: number;
+  name: string;
+  description: string | null;
+  mode: QfMode;
+  createdAt: string;
+  updatedAt: string;
+  suites: QfTrainSuite[];
+}
+
+export interface QfSuiteRunItem {
+  runId: number;
+  testId: number;
+  name: string;
+  status: string;
+  llmCalls: number;
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+}
+
+export interface QfSuiteRun {
+  id: number;
+  suiteId: number;
+  trainRunId: number | null;
+  status: string;
+  mode: QfMode;
+  startedAt: string;
+  finishedAt: string | null;
+  error: unknown;
+  runs: QfSuiteRunItem[];
+}
+
+export interface QfTrainRun {
+  id: number;
+  trainId: number;
+  status: string;
+  mode: QfMode;
+  startedAt: string;
+  finishedAt: string | null;
+  error: unknown;
+  suiteRuns: QfSuiteRun[];
+}
+
+export interface QfScreenshotRef {
+  path: string;
+  url: string;
+}
+
 export interface QfActionTrace {
   action: string;
   raw: unknown;
@@ -62,7 +140,7 @@ export interface QfModelOutput {
 }
 
 export type QfEvent =
-  | { event: "started"; kind: "record" | "replay" | "browse"; testId?: number; testName?: string; stepCount?: number }
+  | { event: "started"; kind: "record" | "replay" | "browse" | "suite" | "train"; testId?: number; testName?: string; stepCount?: number; suiteId?: number; suiteName?: string; trainId?: number; trainName?: string }
   | { event: "record"; type: "milestones"; milestones: string[] }
   | { event: "record"; type: "plan"; turn: number; currentMilestone?: string; actions?: unknown[]; done?: boolean; hint?: string }
   | { event: "record"; type: "step"; turn: number; stepIndex: number; action: QfActionTrace[]; ok?: boolean; error?: string; url?: string; title?: string; screenshot?: string | null; thinking?: string | null; nextGoal?: string | null; memory?: string | null }
@@ -71,7 +149,15 @@ export type QfEvent =
   | { event: "record"; type: "error"; turn: number; error?: string }
   | { event: "replay"; type: "step" | "done"; idx: number; status: "passed" | "failed" | "skipped"; intent: string; detail: Record<string, unknown>; healed?: string | null; success?: boolean; error?: string }
   | { event: "browse"; type: "step_start" | "action" | "guard" | "done"; step?: number; maxSteps?: number; thinking?: string; evaluation?: string; memory?: string; nextGoal?: string; actionIndex?: number; name?: string; params?: Record<string, unknown>; ok?: boolean; error?: string; message?: string; success?: boolean; text?: string; steps?: number; actions?: number; llmCalls?: number; errors?: string[] }
-  | { event: "done"; ok: boolean; testId?: number; report?: unknown; runId?: number; error?: string; llmCalls?: number; selfHealed?: number }
+  | { event: "suite"; type: "step"; suiteRunId: number; testId: number; runId: number; idx: number; status: "passed" | "failed" | "skipped"; intent: string; detail: Record<string, unknown> }
+  | { event: "suite"; type: "test-done"; suiteRunId: number; testId: number; runId: number; success: boolean; error?: string }
+  | { event: "suite"; type: "suite-done"; suiteRunId: number; success: boolean; error?: string }
+  | { event: "train"; type: "suite-start"; trainRunId: number; suiteRunId: number; suiteId: number; suiteName: string }
+  | { event: "train"; type: "step"; trainRunId: number; suiteRunId: number; testId: number; runId: number; idx: number; status: "passed" | "failed" | "skipped"; intent: string; detail: Record<string, unknown> }
+  | { event: "train"; type: "test-done"; trainRunId: number; suiteRunId: number; testId: number; runId: number; success: boolean; error?: string }
+  | { event: "train"; type: "suite-done"; trainRunId: number; suiteRunId: number; success: boolean; error?: string }
+  | { event: "train"; type: "done"; trainRunId: number; success: boolean; error?: string }
+  | { event: "done"; ok: boolean; testId?: number; testName?: string; report?: unknown; runId?: number; error?: string; llmCalls?: number; selfHealed?: number; suiteRunId?: number; trainRunId?: number; status?: string }
   | { event: "error"; message: string };
 
 // ----- REST helpers ----------------------------------------------------------
@@ -200,4 +286,82 @@ export function startBrowse(
   callbacks: StreamCallbacks,
 ): Promise<void> {
   return streamPost("/browse", request, callbacks);
+}
+
+// ----- suites & trains -------------------------------------------------------
+
+export async function listSuites(): Promise<{ suites: QfSuite[] }> {
+  return authedFetch<{ suites: QfSuite[] }>("/suites");
+}
+
+export interface QfSuiteMember {
+  testId: number;
+  parallel?: boolean;
+}
+
+export interface QfTrainMember {
+  suiteId: number;
+  parallel?: boolean;
+}
+
+export async function createSuite(request: { name: string; description?: string; mode?: QfMode; tests?: QfSuiteMember[] }): Promise<{ suite: QfSuite }> {
+  return authedFetch<{ suite: QfSuite }>("/suites", { method: "POST", body: JSON.stringify(request) });
+}
+
+export async function deleteSuite(id: number): Promise<{ ok: boolean }> {
+  return authedFetch<{ ok: boolean }>(`/suites/${id}`, { method: "DELETE" });
+}
+
+export async function updateSuiteTests(suiteId: number, tests: QfSuiteMember[]): Promise<{ suite: QfSuite }> {
+  return authedFetch<{ suite: QfSuite }>(`/suites/${suiteId}/tests`, { method: "PUT", body: JSON.stringify({ tests }) });
+}
+
+export async function listSuiteRuns(suiteId: number): Promise<{ runs: QfRun[] }> {
+  return authedFetch<{ runs: QfRun[] }>(`/suites/${suiteId}/runs`);
+}
+
+export async function getSuiteRun(id: number): Promise<{ suiteRun: QfSuiteRun }> {
+  return authedFetch<{ suiteRun: QfSuiteRun }>(`/suite-runs/${id}`);
+}
+
+export async function listSuiteScreenshots(suiteRunId: number): Promise<{ screenshots: QfScreenshotRef[] }> {
+  return authedFetch<{ screenshots: QfScreenshotRef[] }>(`/suite-runs/${suiteRunId}/screenshots`);
+}
+
+export function startSuiteRun(
+  suiteId: number,
+  callbacks: StreamCallbacks,
+): Promise<void> {
+  return streamPost(`/suites/${suiteId}/run`, {}, callbacks);
+}
+
+export async function listTrains(): Promise<{ trains: QfTrain[] }> {
+  return authedFetch<{ trains: QfTrain[] }>("/trains");
+}
+
+export async function createTrain(request: { name: string; description?: string; mode?: QfMode; suites?: QfTrainMember[] }): Promise<{ train: QfTrain }> {
+  return authedFetch<{ train: QfTrain }>("/trains", { method: "POST", body: JSON.stringify(request) });
+}
+
+export async function deleteTrain(id: number): Promise<{ ok: boolean }> {
+  return authedFetch<{ ok: boolean }>(`/trains/${id}`, { method: "DELETE" });
+}
+
+export async function updateTrainSuites(trainId: number, suites: QfTrainMember[]): Promise<{ train: QfTrain }> {
+  return authedFetch<{ train: QfTrain }>(`/trains/${trainId}/suites`, { method: "PUT", body: JSON.stringify({ suites }) });
+}
+
+export async function listTrainRuns(trainId: number): Promise<{ runs: QfRun[] }> {
+  return authedFetch<{ runs: QfRun[] }>(`/trains/${trainId}/runs`);
+}
+
+export async function getTrainRun(id: number): Promise<{ trainRun: QfTrainRun }> {
+  return authedFetch<{ trainRun: QfTrainRun }>(`/train-runs/${id}`);
+}
+
+export function startTrainRun(
+  trainId: number,
+  callbacks: StreamCallbacks,
+): Promise<void> {
+  return streamPost(`/trains/${trainId}/run`, {}, callbacks);
 }

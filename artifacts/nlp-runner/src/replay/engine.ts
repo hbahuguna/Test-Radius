@@ -59,6 +59,11 @@ export interface ReplayOptions {
   resolveTimeoutMs?: number;
   /** SSE streaming hook: called for each step result during replay. */
   onEvent?: (event: ReplayEvent) => void;
+  /**
+   * When replaying as part of a suite, the grouping suite-run id; written to
+   * the created `runs` row so member runs can be grouped per suite execution.
+   */
+  suiteRunId?: number;
 }
 
 export interface ReplayStepResult {
@@ -157,6 +162,7 @@ export class ReplayRunner {
       testId: test.id,
       status: "running",
       llmCalls,
+      suiteRunId: options.suiteRunId,
     });
     const steps = test.steps;
     const results: ReplayStepResult[] = [];
@@ -199,7 +205,7 @@ export class ReplayRunner {
             : { value: exec.detail, healed: exec.healed?.matchedSelector ?? null };
         results.push({ idx: i, action: step.action, status: "passed", intent, detail });
         store.addRunStep(run.id, { idx: i, status: "passed", detail });
-        options.onEvent?.({ type: "step", idx: i, status: "passed", intent, detail, healed: exec.healed?.matchedSelector ?? null });
+        options.onEvent?.({ type: "step", idx: i, status: "passed", intent, detail, healed: exec.healed?.matchedSelector ?? null, runId: run.id });
         if (options.screenshotDir) {
           await this.screenshot(options.screenshotDir, run.id, i + 1, step.action);
         }
@@ -217,7 +223,7 @@ export class ReplayRunner {
           status: "failed",
           detail: { error: message },
         });
-        options.onEvent?.({ type: "step", idx: i, status: "failed", intent, detail: { error: message } });
+        options.onEvent?.({ type: "step", idx: i, status: "failed", intent, detail: { error: message }, runId: run.id });
         for (let k = i + 1; k < steps.length; k++) {
           const skipped = steps[k];
           results.push({

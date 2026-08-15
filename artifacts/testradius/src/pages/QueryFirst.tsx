@@ -21,6 +21,8 @@ import {
   type QfRun,
   type QfEvent,
 } from "@/lib/queryfirst-api";
+import { SuitesPanel } from "@/components/queryfirst/SuitesPanel";
+import { TrainsPanel } from "@/components/queryfirst/TrainsPanel";
 import { toast } from "sonner";
 import {
   Play,
@@ -31,10 +33,10 @@ import {
   Camera,
   FlaskConical,
   RotateCcw,
-  Wrench,
   Globe,
   ChevronDown,
   ChevronRight,
+  Wrench,
 } from "lucide-react";
 
 type Mode = "idle" | "recording" | "replaying" | "browsing";
@@ -51,7 +53,7 @@ function isValidScreenshot(s: string | null): s is string {
   return !!s && s.startsWith("data:image/") && s.includes(",") && s.length > 300;
 }
 
-export function QueryFirstDemo() {
+export function QueryFirst() {
   const { user } = useAuth();
 
   // Form state
@@ -61,7 +63,6 @@ export function QueryFirstDemo() {
   const [provider, setProvider] = useState("google");
   const [modelId, setModelId] = useState(defaultModelFor("google"));
   const [keys, setKeys] = useState<UserApiKey[]>([]);
-  const [redesign, setRedesign] = useState(false);
 
   // Run state
   const [mode, setMode] = useState<Mode>("idle");
@@ -78,6 +79,7 @@ export function QueryFirstDemo() {
   const [selectedTest, setSelectedTest] = useState<number | null>(null);
   const [runs, setRuns] = useState<QfRun[]>([]);
   const [stepsOpen, setStepsOpen] = useState(false);
+  const [redesign, setRedesign] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const screenshotTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -231,7 +233,7 @@ export function QueryFirstDemo() {
         setStatus(event.ok ? "done" : "error");
         setMode("idle");
         if (event.ok && event.testId) {
-          toast.success(`Test #${event.testId} saved!`);
+          toast.success(`Test saved: ${event.testName ? `${event.testName} ` : ""}#${event.testId}`);
           refreshTests();
         }
         if (event.ok && event.selfHealed && event.selfHealed > 0) {
@@ -277,8 +279,6 @@ export function QueryFirstDemo() {
 
   const handleStartReplay = async () => {
     if (selectedTest === null) return;
-    const test = tests.find((t) => t.id === selectedTest);
-    if (!test) return;
 
     setMode("replaying");
     setStatus("running");
@@ -289,8 +289,9 @@ export function QueryFirstDemo() {
     let vars: Record<string, string> = {};
     try { vars = JSON.parse(variables); } catch { /* ignore */ }
 
+    const test = tests.find((t) => t.id === selectedTest);
     // For heal demo: append ?redesign=1 to the entry URL
-    const replayEntryUrl = redesign && test.entryUrl
+    const replayEntryUrl = redesign && test?.entryUrl
       ? test.entryUrl + (test.entryUrl.includes("?") ? "&" : "?") + "redesign=1"
       : undefined;
 
@@ -350,7 +351,7 @@ export function QueryFirstDemo() {
     }
   };
 
-  const handleDeleteStep = async (testId: number, stepId: number) => {
+const handleDeleteStep = async (testId: number, stepId: number) => {
     try {
       const result = await deleteStep(testId, stepId);
       setTests((prev) =>
@@ -366,12 +367,12 @@ export function QueryFirstDemo() {
     }
   };
 
+  const [activeTab, setActiveTab] = useState<"tests" | "suites" | "trains">("tests");
   const running = mode !== "idle";
   const isRecording = mode === "recording";
   const isBrowsing = mode === "browsing";
 
-  /** Colour class for the action type badge in the steps panel */
-  const actionBadgeClass = (action: string) => {
+const actionBadgeClass = (action: string) => {
     const map: Record<string, string> = {
       navigate: "bg-blue-500/10 text-blue-500",
       click: "bg-indigo-500/10 text-indigo-500",
@@ -400,7 +401,7 @@ export function QueryFirstDemo() {
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
               <FlaskConical className="size-7 text-primary" />
-              QueryFirst Demo
+              QueryFirst
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
               Record natural-language tests, replay them with self-healing, or run the live agent on a browsing task.
@@ -418,21 +419,24 @@ export function QueryFirstDemo() {
           </div>
         </div>
 
-        {/* Quick Seeds */}
-        <div className="flex flex-wrap gap-2">
-          {quickSeeds.map((seed) => (
-            <Button
-              key={seed.label}
- variant="outline"
-              size="sm"
-              disabled={running}
-              onClick={() => { setQuery(seed.query); setEntryUrl(seed.url); }}
+        {/* Tabs */}
+        <div className="flex items-center gap-1 border-b border-zinc-800 pb-px">
+          {(["tests", "suites", "trains"] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-3 py-2 text-sm font-medium capitalize transition-colors border-b-2 -mb-px ${
+                activeTab === tab
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
             >
-              {seed.label}
-            </Button>
+              {tab}
+            </button>
           ))}
         </div>
 
+        {activeTab === "tests" && (
         <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr_360px] gap-4">
           {/* LEFT: Controls */}
           <div className="space-y-4">
@@ -699,6 +703,10 @@ export function QueryFirstDemo() {
             </Card>
           </div>
         </div>
+        )}
+
+        {activeTab === "suites" && <SuitesPanel />}
+        {activeTab === "trains" && <TrainsPanel />}
       </div>
     </div>
   );

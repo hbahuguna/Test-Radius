@@ -6,18 +6,33 @@ import type {
   NewSiteMemory,
   NewSlot,
   NewStep,
+  NewSuite,
+  NewSuiteTest,
   NewTest,
   NewTestVersion,
+  NewTrain,
+  NewTrainRun,
+  NewTrainSuite,
+  NewSuiteRun,
   Run,
   RunStep,
   RunWithSteps,
   SiteMemory,
   Slot,
   Step,
+  Suite,
+  SuiteRun,
+  SuiteRunWithRuns,
+  SuiteTest,
+  SuiteWithTests,
   Test,
   TestSource,
   TestVersion,
   TestWithSteps,
+  Train,
+  TrainRun,
+  TrainSuite,
+  TrainWithSuites,
   WaitCondition,
 } from "./types.js";
 
@@ -87,6 +102,7 @@ interface RunRow {
   started_at: string;
   finished_at: string | null;
   error_json: string | null;
+  suite_run_id: number | null;
 }
 
 interface RunStepRow {
@@ -118,6 +134,61 @@ interface SiteMemoryRow {
   confidence: number;
   created_at: string;
   updated_at: string;
+}
+
+interface SuiteRow {
+  id: number;
+  name: string;
+  description: string | null;
+  mode: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface SuiteTestRow {
+  id: number;
+  suite_id: number;
+  test_id: number;
+  position: number;
+  parallel: number;
+}
+
+interface TrainRow {
+  id: number;
+  name: string;
+  description: string | null;
+  mode: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface TrainSuiteRow {
+  id: number;
+  train_id: number;
+  suite_id: number;
+  position: number;
+  parallel: number;
+}
+
+interface SuiteRunRow {
+  id: number;
+  suite_id: number;
+  train_run_id: number | null;
+  status: string;
+  mode: string;
+  started_at: string;
+  finished_at: string | null;
+  error_json: string | null;
+}
+
+interface TrainRunRow {
+  id: number;
+  train_id: number;
+  status: string;
+  mode: string;
+  started_at: string;
+  finished_at: string | null;
+  error_json: string | null;
 }
 
 function jsonParse<T>(text: string | null): T | null {
@@ -189,6 +260,12 @@ export class DataStore {
   listTests(): Test[] {
     const rows = this.db.prepare(`SELECT * FROM tests ORDER BY id`).all() as TestRow[];
     return rows.map(mapTest);
+  }
+
+  /** Every existing test name (used to keep generated display names unique). */
+  listTestNames(): string[] {
+    const rows = this.db.prepare(`SELECT name FROM tests`).all() as { name: string }[];
+    return rows.map((r) => r.name);
   }
 
   updateTest(id: number, input: Partial<NewTest>): Test {
@@ -461,8 +538,8 @@ export class DataStore {
   createRun(input: NewRun): Run {
     const result = this.db
       .prepare(
-        `INSERT INTO runs (test_id, status, llm_calls, started_at, error_json)
-         VALUES (@testId, @status, @llmCalls, @startedAt, @errorJson)`,
+        `INSERT INTO runs (test_id, status, llm_calls, started_at, error_json, suite_run_id)
+         VALUES (@testId, @status, @llmCalls, @startedAt, @errorJson, @suiteRunId)`,
       )
       .run({
         testId: input.testId,
@@ -470,6 +547,7 @@ export class DataStore {
         llmCalls: input.llmCalls ?? 0,
         startedAt: input.startedAt ?? now(),
         errorJson: input.error === undefined ? null : JSON.stringify(input.error),
+        suiteRunId: input.suiteRunId ?? null,
       });
     return this.getRun(Number(result.lastInsertRowid))!;
   }
@@ -657,6 +735,305 @@ export class DataStore {
     const info = kind === undefined ? stmt.run(site) : stmt.run(site, kind);
     return Number(info.changes);
   }
+
+  // ----- suites ------------------------------------------------------------
+
+  createSuite(input: NewSuite): Suite {
+    const timestamp = now();
+    const result = this.db
+      .prepare(
+        `INSERT INTO suites (name, description, mode, created_at, updated_at)
+         VALUES (@name, @description, @mode, @createdAt, @updatedAt)`,
+      )
+      .run({
+        name: input.name,
+        description: input.description ?? null,
+        mode: input.mode ?? "sequential",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    return this.getSuite(Number(result.lastInsertRowid))!;
+  }
+
+  getSuite(id: number): Suite | null {
+    const row = this.db.prepare(`SELECT * FROM suites WHERE id = ?`).get(id) as SuiteRow | undefined;
+    return row ? mapSuite(row) : null;
+  }
+
+  getSuiteWithTests(id: number): SuiteWithTests | null {
+    const suite = this.getSuite(id);
+    if (!suite) return null;
+    return { ...suite, tests: this.listSuiteTestsBySuite(id) };
+  }
+
+  listSuites(): Suite[] {
+    const rows = this.db.prepare(`SELECT * FROM suites ORDER BY id`).all() as SuiteRow[];
+    return rows.map(mapSuite);
+  }
+
+  updateSuite(id: number, input: Partial<NewSuite>): Suite {
+    const current = this.getSuite(id);
+    if (!current) throw new Error(`No suite with id ${id}`);
+    this.db
+      .prepare(`UPDATE suites SET name = @name, description = @description, mode = @mode, updated_at = @now WHERE id = @id`)
+      .run({
+        id,
+        name: input.name ?? current.name,
+        description: input.description === undefined ? current.description : input.description,
+        mode: input.mode ?? current.mode,
+        now: now(),
+      });
+    return this.getSuite(id)!;
+  }
+
+  deleteSuite(id: number): void {
+    // runs.suite_run_id is a plain NO-ACTION reference; detach member runs
+    // before the cascading delete of suite_runs would otherwise fail the FK.
+    this.db
+      .prepare(`UPDATE runs SET suite_run_id = NULL WHERE suite_run_id IN (SELECT id FROM suite_runs WHERE suite_id = ?)`)
+      .run(id);
+    this.db.prepare(`DELETE FROM suites WHERE id = ?`).run(id);
+  }
+
+  addSuiteTest(suiteId: number, input: NewSuiteTest): SuiteTest {
+    const result = this.db
+      .prepare(
+        `INSERT INTO suite_tests (suite_id, test_id, position, parallel) VALUES (@suiteId, @testId, @position, @parallel)`,
+      )
+      .run({
+        suiteId,
+        testId: input.testId,
+        position: input.position,
+        parallel: input.parallel === true ? 1 : 0,
+      });
+    return this.getSuiteTest(Number(result.lastInsertRowid))!;
+  }
+
+  getSuiteTest(id: number): SuiteTest | null {
+    const row = this.db.prepare(`SELECT * FROM suite_tests WHERE id = ?`).get(id) as SuiteTestRow | undefined;
+    return row ? mapSuiteTest(row) : null;
+  }
+
+  listSuiteTestsBySuite(suiteId: number): SuiteTest[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM suite_tests WHERE suite_id = ? ORDER BY position`)
+      .all(suiteId) as SuiteTestRow[];
+    return rows.map(mapSuiteTest);
+  }
+
+  deleteSuiteTestsBySuite(suiteId: number): void {
+    this.db.prepare(`DELETE FROM suite_tests WHERE suite_id = ?`).run(suiteId);
+  }
+
+  /** Replace a suite's member tests atomically. Array order becomes position;
+   *  each entry may carry a `parallel` flag to run it concurrently. */
+  setSuiteTests(suiteId: number, items: Array<{ testId: number; parallel?: boolean }>): void {
+    this.db.transaction(() => {
+      this.deleteSuiteTestsBySuite(suiteId);
+      items.forEach((item, position) => this.addSuiteTest(suiteId, { testId: item.testId, position, parallel: item.parallel }));
+      this.db.prepare(`UPDATE suites SET updated_at = @now WHERE id = @id`).run({ now: now(), id: suiteId });
+    })();
+  }
+
+  // ----- trains ------------------------------------------------------------
+
+  createTrain(input: NewTrain): Train {
+    const timestamp = now();
+    const result = this.db
+      .prepare(
+        `INSERT INTO trains (name, description, mode, created_at, updated_at)
+         VALUES (@name, @description, @mode, @createdAt, @updatedAt)`,
+      )
+      .run({
+        name: input.name,
+        description: input.description ?? null,
+        mode: input.mode ?? "sequential",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    return this.getTrain(Number(result.lastInsertRowid))!;
+  }
+
+  getTrain(id: number): Train | null {
+    const row = this.db.prepare(`SELECT * FROM trains WHERE id = ?`).get(id) as TrainRow | undefined;
+    return row ? mapTrain(row) : null;
+  }
+
+  getTrainWithSuites(id: number): TrainWithSuites | null {
+    const train = this.getTrain(id);
+    if (!train) return null;
+    return { ...train, suites: this.listTrainSuitesByTrain(id) };
+  }
+
+  listTrains(): Train[] {
+    const rows = this.db.prepare(`SELECT * FROM trains ORDER BY id`).all() as TrainRow[];
+    return rows.map(mapTrain);
+  }
+
+  updateTrain(id: number, input: Partial<NewTrain>): Train {
+    const current = this.getTrain(id);
+    if (!current) throw new Error(`No train with id ${id}`);
+    this.db
+      .prepare(`UPDATE trains SET name = @name, description = @description, mode = @mode, updated_at = @now WHERE id = @id`)
+      .run({
+        id,
+        name: input.name ?? current.name,
+        description: input.description === undefined ? current.description : input.description,
+        mode: input.mode ?? current.mode,
+        now: now(),
+      });
+    return this.getTrain(id)!;
+  }
+
+  deleteTrain(id: number): void {
+    // suite_runs.train_run_id is a plain NO-ACTION reference; detach its suite
+    // runs before the cascading delete of train_runs would otherwise fail the FK.
+    this.db
+      .prepare(`UPDATE suite_runs SET train_run_id = NULL WHERE train_run_id IN (SELECT id FROM train_runs WHERE train_id = ?)`)
+      .run(id);
+    this.db.prepare(`DELETE FROM trains WHERE id = ?`).run(id);
+  }
+
+  addTrainSuite(trainId: number, input: NewTrainSuite): TrainSuite {
+    const result = this.db
+      .prepare(
+        `INSERT INTO train_suites (train_id, suite_id, position, parallel) VALUES (@trainId, @suiteId, @position, @parallel)`,
+      )
+      .run({
+        trainId,
+        suiteId: input.suiteId,
+        position: input.position,
+        parallel: input.parallel === true ? 1 : 0,
+      });
+    return this.getTrainSuite(Number(result.lastInsertRowid))!;
+  }
+
+  getTrainSuite(id: number): TrainSuite | null {
+    const row = this.db.prepare(`SELECT * FROM train_suites WHERE id = ?`).get(id) as TrainSuiteRow | undefined;
+    return row ? mapTrainSuite(row) : null;
+  }
+
+  listTrainSuitesByTrain(trainId: number): TrainSuite[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM train_suites WHERE train_id = ? ORDER BY position`)
+      .all(trainId) as TrainSuiteRow[];
+    return rows.map(mapTrainSuite);
+  }
+
+  deleteTrainSuitesByTrain(trainId: number): void {
+    this.db.prepare(`DELETE FROM train_suites WHERE train_id = ?`).run(trainId);
+  }
+
+  /** Replace a train's member suites atomically. Array order becomes position;
+   *  each entry may carry a `parallel` flag to run it concurrently. */
+  setTrainSuites(trainId: number, items: Array<{ suiteId: number; parallel?: boolean }>): void {
+    this.db.transaction(() => {
+      this.deleteTrainSuitesByTrain(trainId);
+      items.forEach((item, position) => this.addTrainSuite(trainId, { suiteId: item.suiteId, position, parallel: item.parallel }));
+      this.db.prepare(`UPDATE trains SET updated_at = @now WHERE id = @id`).run({ now: now(), id: trainId });
+    })();
+  }
+
+  // ----- suite runs --------------------------------------------------------
+
+  createSuiteRun(input: NewSuiteRun): SuiteRun {
+    const result = this.db
+      .prepare(
+        `INSERT INTO suite_runs (suite_id, train_run_id, status, mode, started_at, error_json)
+         VALUES (@suiteId, @trainRunId, @status, @mode, @startedAt, @errorJson)`,
+      )
+      .run({
+        suiteId: input.suiteId,
+        trainRunId: input.trainRunId ?? null,
+        status: input.status,
+        mode: input.mode,
+        startedAt: input.startedAt ?? now(),
+        errorJson: input.error === undefined ? null : JSON.stringify(input.error),
+      });
+    return this.getSuiteRun(Number(result.lastInsertRowid))!;
+  }
+
+  getSuiteRun(id: number): SuiteRun | null {
+    const row = this.db.prepare(`SELECT * FROM suite_runs WHERE id = ?`).get(id) as SuiteRunRow | undefined;
+    return row ? mapSuiteRun(row) : null;
+  }
+
+  listSuiteRuns(suiteId?: number): SuiteRun[] {
+    const rows = suiteId === undefined
+      ? (this.db.prepare(`SELECT * FROM suite_runs ORDER BY id`).all() as SuiteRunRow[])
+      : (this.db.prepare(`SELECT * FROM suite_runs WHERE suite_id = ? ORDER BY id`).all(suiteId) as SuiteRunRow[]);
+    return rows.map(mapSuiteRun);
+  }
+
+  getSuiteRunWithRuns(id: number): SuiteRunWithRuns | null {
+    const run = this.getSuiteRun(id);
+    if (!run) return null;
+    const rows = this.db
+      .prepare(`SELECT * FROM runs WHERE suite_run_id = ? ORDER BY id`)
+      .all(id) as RunRow[];
+    return { ...run, runs: rows.map(mapRun) };
+  }
+
+  finishSuiteRun(id: number, status: Run["status"], error?: unknown): SuiteRun {
+    const run = this.getSuiteRun(id);
+    if (!run) throw new Error(`No suite run with id ${id}`);
+    this.db
+      .prepare(`UPDATE suite_runs SET status = ?, finished_at = ?, error_json = ? WHERE id = ?`)
+      .run(status, now(), error === undefined ? null : JSON.stringify(error), id);
+    return this.getSuiteRun(id)!;
+  }
+
+  linkSuiteRunToTrain(suiteRunId: number, trainRunId: number): void {
+    this.db.prepare(`UPDATE suite_runs SET train_run_id = ? WHERE id = ?`).run(trainRunId, suiteRunId);
+  }
+
+  // ----- train runs --------------------------------------------------------
+
+  createTrainRun(input: NewTrainRun): TrainRun {
+    const result = this.db
+      .prepare(
+        `INSERT INTO train_runs (train_id, status, mode, started_at, error_json)
+         VALUES (@trainId, @status, @mode, @startedAt, @errorJson)`,
+      )
+      .run({
+        trainId: input.trainId,
+        status: input.status,
+        mode: input.mode,
+        startedAt: input.startedAt ?? now(),
+        errorJson: input.error === undefined ? null : JSON.stringify(input.error),
+      });
+    return this.getTrainRun(Number(result.lastInsertRowid))!;
+  }
+
+  getTrainRun(id: number): TrainRun | null {
+    const row = this.db.prepare(`SELECT * FROM train_runs WHERE id = ?`).get(id) as TrainRunRow | undefined;
+    return row ? mapTrainRun(row) : null;
+  }
+
+  listTrainRuns(trainId?: number): TrainRun[] {
+    const rows = trainId === undefined
+      ? (this.db.prepare(`SELECT * FROM train_runs ORDER BY id`).all() as TrainRunRow[])
+      : (this.db.prepare(`SELECT * FROM train_runs WHERE train_id = ? ORDER BY id`).all(trainId) as TrainRunRow[]);
+    return rows.map(mapTrainRun);
+  }
+
+  getTrainRunWithSuiteRuns(id: number): TrainRun & { suiteRuns: SuiteRun[] } {
+    const run = this.getTrainRun(id);
+    if (!run) throw new Error(`No train run with id ${id}`);
+    const rows = this.db
+      .prepare(`SELECT * FROM suite_runs WHERE train_run_id = ? ORDER BY id`)
+      .all(id) as SuiteRunRow[];
+    return { ...run, suiteRuns: rows.map(mapSuiteRun) };
+  }
+
+  finishTrainRun(id: number, status: Run["status"], error?: unknown): TrainRun {
+    const run = this.getTrainRun(id);
+    if (!run) throw new Error(`No train run with id ${id}`);
+    this.db
+      .prepare(`UPDATE train_runs SET status = ?, finished_at = ?, error_json = ? WHERE id = ?`)
+      .run(status, now(), error === undefined ? null : JSON.stringify(error), id);
+    return this.getTrainRun(id)!;
+  }
 }
 
 function mapTest(row: TestRow): Test {
@@ -714,6 +1091,7 @@ function mapRun(row: RunRow): Run {
     startedAt: row.started_at,
     finishedAt: row.finished_at,
     error: jsonParse(row.error_json),
+    suiteRunId: row.suite_run_id,
   };
 }
 
@@ -751,5 +1129,72 @@ function mapMemory(row: SiteMemoryRow): SiteMemory {
     confidence: row.confidence,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapSuite(row: SuiteRow): Suite {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    mode: row.mode as Suite["mode"],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapSuiteTest(row: SuiteTestRow): SuiteTest {
+  return {
+    id: row.id,
+    suiteId: row.suite_id,
+    testId: row.test_id,
+    position: row.position,
+    parallel: row.parallel === 1,
+  };
+}
+
+function mapTrain(row: TrainRow): Train {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    mode: row.mode as Train["mode"],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapTrainSuite(row: TrainSuiteRow): TrainSuite {
+  return {
+    id: row.id,
+    trainId: row.train_id,
+    suiteId: row.suite_id,
+    position: row.position,
+    parallel: row.parallel === 1,
+  };
+}
+
+function mapSuiteRun(row: SuiteRunRow): SuiteRun {
+  return {
+    id: row.id,
+    suiteId: row.suite_id,
+    trainRunId: row.train_run_id,
+    status: row.status as SuiteRun["status"],
+    mode: row.mode as SuiteRun["mode"],
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    error: jsonParse(row.error_json),
+  };
+}
+
+function mapTrainRun(row: TrainRunRow): TrainRun {
+  return {
+    id: row.id,
+    trainId: row.train_id,
+    status: row.status as TrainRun["status"],
+    mode: row.mode as TrainRun["mode"],
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    error: jsonParse(row.error_json),
   };
 }
