@@ -163,4 +163,50 @@ describe("suite & train runs", () => {
     expect(store.getTrain(train.id)).toBeNull();
     expect(store.listTrainRuns(train.id)).toEqual([]);
   });
+
+  it("pages suite runs across suites newest-first", () => {
+    const store = makeStore();
+    const [a] = seedTests(store, ["A"]);
+    const s1 = store.createSuite({ name: "S1" });
+    const s2 = store.createSuite({ name: "S2" });
+    store.setSuiteTests(s1.id, [{ testId: a }]);
+    store.setSuiteTests(s2.id, [{ testId: a }]);
+    for (let i = 0; i < 12; i++) {
+      const suite = i % 2 === 0 ? s1 : s2;
+      store.createSuiteRun({ suiteId: suite.id, status: "passed", mode: "sequential" });
+    }
+
+    const page1 = store.listSuiteRunsPage({ limit: 10, offset: 0 });
+    expect(page1.runs).toHaveLength(10);
+    expect(page1.hasMore).toBe(true);
+    expect(page1.runs.map((r) => r.id)).toEqual(
+      [...page1.runs.map((r) => r.id)].sort((x, y) => y - x),
+    );
+
+    const page2 = store.listSuiteRunsPage({ limit: 10, offset: 10 });
+    expect(page2.runs).toHaveLength(2);
+    expect(page2.hasMore).toBe(false);
+    expect(page2.runs[0].id).toBeLessThan(page1.runs[page1.runs.length - 1].id);
+  });
+
+  it("pages train runs newest-first", () => {
+    const store = makeStore();
+    const [a] = seedTests(store, ["A"]);
+    const suite = store.createSuite({ name: "S" });
+    store.setSuiteTests(suite.id, [{ testId: a }]);
+    const train = store.createTrain({ name: "T", mode: "sequential" });
+    for (let i = 0; i < 3; i++) {
+      store.createTrainRun({ trainId: train.id, status: "passed", mode: "sequential" });
+    }
+
+    const page = store.listTrainRunsPage({ limit: 2, offset: 0 });
+    expect(page.runs).toHaveLength(2);
+    expect(page.hasMore).toBe(true);
+    expect(page.runs.map((r) => r.id)).toEqual(
+      [...page.runs.map((r) => r.id)].sort((x, y) => y - x),
+    );
+    const rest = store.listTrainRunsPage({ limit: 2, offset: 2 });
+    expect(rest.runs).toHaveLength(1);
+    expect(rest.hasMore).toBe(false);
+  });
 });

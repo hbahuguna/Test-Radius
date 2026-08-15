@@ -23,6 +23,8 @@ import {
 } from "@/lib/queryfirst-api";
 import { SuitesPanel } from "@/components/queryfirst/SuitesPanel";
 import { TrainsPanel } from "@/components/queryfirst/TrainsPanel";
+import { SuiteRunsReport } from "@/components/queryfirst/reports/SuiteRunsReport";
+import { TrainRunsReport } from "@/components/queryfirst/reports/TrainRunsReport";
 import { toast } from "sonner";
 import {
   Play,
@@ -367,7 +369,8 @@ const handleDeleteStep = async (testId: number, stepId: number) => {
     }
   };
 
-  const [activeTab, setActiveTab] = useState<"tests" | "suites" | "trains">("tests");
+  const [activeTab, setActiveTab] = useState<"tests" | "suites" | "trains" | "reports">("tests");
+  const [reportTab, setReportTab] = useState<"suite-runs" | "train-runs">("suite-runs");
   const running = mode !== "idle";
   const isRecording = mode === "recording";
   const isBrowsing = mode === "browsing";
@@ -421,7 +424,7 @@ const actionBadgeClass = (action: string) => {
 
         {/* Tabs */}
         <div className="flex items-center gap-1 border-b border-zinc-800 pb-px">
-          {(["tests", "suites", "trains"] as const).map((tab) => (
+          {(["tests", "suites", "trains", "reports"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -707,6 +710,30 @@ const actionBadgeClass = (action: string) => {
 
         {activeTab === "suites" && <SuitesPanel />}
         {activeTab === "trains" && <TrainsPanel />}
+
+        {activeTab === "reports" && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-1 border-b border-zinc-800 pb-px max-w-xs">
+              {([
+                { id: "suite-runs", label: "Test Suite Runs" },
+                { id: "train-runs", label: "Train Runs" },
+              ] as const).map((sub) => (
+                <button
+                  key={sub.id}
+                  onClick={() => setReportTab(sub.id)}
+                  className={`px-3 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                    reportTab === sub.id
+                      ? "border-primary text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {sub.label}
+                </button>
+              ))}
+            </div>
+            {reportTab === "suite-runs" ? <SuiteRunsReport /> : <TrainRunsReport />}
+          </div>
+        )}
       </div>
     </div>
   );

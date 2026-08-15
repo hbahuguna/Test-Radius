@@ -14,6 +14,7 @@ import type {
   NewTrainRun,
   NewTrainSuite,
   NewSuiteRun,
+  PagedRuns,
   Run,
   RunStep,
   RunWithSteps,
@@ -977,6 +978,15 @@ export class DataStore {
     return rows.map(mapSuiteRun);
   }
 
+  /** Page of suite runs across all suites, newest first (id DESC). */
+  listSuiteRunsPage(input: { limit: number; offset: number }): PagedRuns<SuiteRun> {
+    const rows = this.db
+      .prepare(`SELECT * FROM suite_runs ORDER BY id DESC LIMIT ? OFFSET ?`)
+      .all(input.limit + 1, input.offset) as SuiteRunRow[];
+    const hasMore = rows.length > input.limit;
+    return { runs: rows.slice(0, input.limit).map(mapSuiteRun), hasMore };
+  }
+
   getSuiteRunWithRuns(id: number): SuiteRunWithRuns | null {
     const run = this.getSuiteRun(id);
     if (!run) return null;
@@ -1027,6 +1037,15 @@ export class DataStore {
       ? (this.db.prepare(`SELECT * FROM train_runs ORDER BY id`).all() as TrainRunRow[])
       : (this.db.prepare(`SELECT * FROM train_runs WHERE train_id = ? ORDER BY id`).all(trainId) as TrainRunRow[]);
     return rows.map(mapTrainRun);
+  }
+
+  /** Page of train runs across all trains, newest first (id DESC). */
+  listTrainRunsPage(input: { limit: number; offset: number }): PagedRuns<TrainRun> {
+    const rows = this.db
+      .prepare(`SELECT * FROM train_runs ORDER BY id DESC LIMIT ? OFFSET ?`)
+      .all(input.limit + 1, input.offset) as TrainRunRow[];
+    const hasMore = rows.length > input.limit;
+    return { runs: rows.slice(0, input.limit).map(mapTrainRun), hasMore };
   }
 
   getTrainRunWithSuiteRuns(id: number): TrainRun & { suiteRuns: SuiteRun[] } {

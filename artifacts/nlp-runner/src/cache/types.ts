@@ -320,3 +320,9 @@ export interface NewTrainRun {
 export interface SuiteRunWithRuns extends SuiteRun {
   runs: Run[];
 }
+
+/** One page of run rows, newest first. `hasMore` is true when more rows exist. */
+export interface PagedRuns<T> {
+  runs: T[];
+  hasMore: boolean;
+}

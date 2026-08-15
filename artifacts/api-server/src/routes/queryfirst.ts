@@ -33,6 +33,8 @@ import {
   type RecordedStep,
   type SuiteRunnerEvent,
   type TrainRunnerEvent,
+  type SuiteRun,
+  type TrainRun,
 } from "@workspace/nlp-runner";
 
 const CHROME_WARMING_UP_MSG =
@@ -951,9 +953,11 @@ function trainPayload(store: DataStore, trainId: number) {
 function suiteRunPayload(store: DataStore, suiteRunId: number) {
   const run = store.getSuiteRunWithRuns(suiteRunId);
   if (!run) return null;
+  const suite = store.getSuite(run.suiteId);
   return {
     id: run.id,
     suiteId: run.suiteId,
+    suiteName: suite?.name ?? `Suite #${run.suiteId}`,
     trainRunId: run.trainRunId,
     status: run.status,
     mode: run.mode,
@@ -998,6 +1002,55 @@ function listSuiteScreenshots(suiteRunId: number): string[] {
   return (readdirSync(root, { recursive: true }) as string[])
     .filter((f) => /\.png$/i.test(f))
     .sort();
+}
+
+/** Screenshots belonging to one member test run of a suite run. */
+function listScreenshotsForTestRun(suiteRunId: number, testId: number, runId: number): { path: string; url: string }[] {
+  const root = join(suiteScreenshotsDir(), String(suiteRunId), String(testId));
+  if (!existsSync(root)) return [];
+  const prefix = `${runId}-`;
+  return (readdirSync(root) as string[])
+    .filter((f) => f.startsWith(prefix) && /\.png$/i.test(f))
+    .sort()
+    .map((f) => ({
+      path: f,
+      url: `/api/queryfirst/suite-runs/${suiteRunId}/screenshots/${testId}/${f}`,
+    }));
+}
+
+function suiteRunSummary(store: DataStore, run: SuiteRun) {
+  const suite = store.getSuite(run.suiteId);
+  const loaded = store.getSuiteRunWithRuns(run.id);
+  const runs = loaded?.runs ?? [];
+  return {
+    id: run.id,
+    suiteId: run.suiteId,
+    suiteName: suite?.name ?? `Suite #${run.suiteId}`,
+    trainRunId: run.trainRunId,
+    status: run.status,
+    mode: run.mode,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    error: run.error instanceof Error ? run.error.message : run.error,
+    testCount: runs.length,
+    passed: runs.filter((r) => r.status === "passed").length,
+    failed: runs.filter((r) => r.status === "failed").length,
+  };
+}
+
+function trainRunSummary(store: DataStore, run: TrainRun) {
+  const train = store.getTrain(run.trainId);
+  return {
+    id: run.id,
+    trainId: run.trainId,
+    trainName: train?.name ?? `Train #${run.trainId}`,
+    status: run.status,
+    mode: run.mode,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    error: run.error instanceof Error ? run.error.message : run.error,
+    suiteCount: store.getTrainRunWithSuiteRuns(run.id).suiteRuns.length,
+  };
 }
 
 // GET /queryfirst/suites — list all suites
@@ -1436,6 +1489,98 @@ router.post("/trains/:id/run", async (req: Request, res: Response) => {
 });
 
 // ----- run results & screenshots ---------------------------------------------
+
+// GET /queryfirst/suite-runs — global suite-run history (newest first, paginated)
+router.get("/suite-runs", async (req: Request, res: Response) => {
+  try {
+    const store = getStore();
+    const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 50);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const page = store.listSuiteRunsPage({ limit, offset });
+    res.json({
+      runs: page.runs.map((r) => suiteRunSummary(store, r)),
+      hasMore: page.hasMore,
+    });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: list suite runs failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to list suite runs" });
+  }
+});
+
+// GET /queryfirst/train-runs — global train-run history (newest first, paginated)
+router.get("/train-runs", async (req: Request, res: Response) => {
+  try {
+    const store = getStore();
+    const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 50);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const page = store.listTrainRunsPage({ limit, offset });
+    res.json({
+      runs: page.runs.map((r) => trainRunSummary(store, r)),
+      hasMore: page.hasMore,
+    });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: list train runs failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to list train runs" });
+  }
+});
+
+// GET /queryfirst/test-runs/:runId — one test run with steps + screenshots
+router.get("/test-runs/:runId", async (req: Request, res: Response) => {
+  try {
+    const store = getStore();
+    const run = store.getRunWithSteps(Number(req.params.runId));
+    if (!run) {
+      res.status(404).json({ error: "not_found", message: `Test run #${req.params.runId} not found` });
+      return;
+    }
+    const test = store.getTest(run.testId);
+    const intentByIdx = new Map(store.listStepsByTest(run.testId).map((s) => [s.idx, s]));
+    const steps = run.steps.map((rs) => ({
+      idx: rs.idx,
+      status: rs.status,
+      intent: intentByIdx.has(rs.idx) ? stepToEnglish(intentByIdx.get(rs.idx)!) : null,
+      detail: rs.detail ?? null,
+    }));
+    const screenshots = run.suiteRunId !== null
+      ? listScreenshotsForTestRun(run.suiteRunId, run.testId, run.id)
+      : [];
+    res.json({
+      run: {
+        runId: run.id,
+        testId: run.testId,
+        testName: test?.name ?? `Test #${run.testId}`,
+        suiteRunId: run.suiteRunId,
+        status: run.status,
+        llmCalls: run.llmCalls,
+        startedAt: run.startedAt,
+        finishedAt: run.finishedAt,
+        error: run.error instanceof Error ? run.error.message : run.error,
+        steps,
+        screenshots,
+      },
+    });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: get test run failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to get test run" });
+  }
+});
+
+// GET /queryfirst/train-runs/:id/suites — suite runs of a train run (summary only)
+router.get("/train-runs/:id/suites", async (req: Request, res: Response) => {
+  try {
+    const store = getStore();
+    const id = Number(req.params.id);
+    if (!store.getTrainRun(id)) {
+      res.status(404).json({ error: "not_found", message: `Train run #${id} not found` });
+      return;
+    }
+    const loaded = store.getTrainRunWithSuiteRuns(id);
+    res.json({ suiteRuns: loaded.suiteRuns.map((sr) => suiteRunSummary(store, sr)) });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: list train run suites failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to list train run suites" });
+  }
+});
 
 // GET /queryfirst/suite-runs/:id — suite run with member test runs
 router.get("/suite-runs/:id", async (req: Request, res: Response) => {

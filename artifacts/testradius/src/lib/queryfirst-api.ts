@@ -106,6 +106,7 @@ export interface QfSuiteRunItem {
 export interface QfSuiteRun {
   id: number;
   suiteId: number;
+  suiteName: string;
   trainRunId: number | null;
   status: string;
   mode: QfMode;
@@ -129,6 +130,54 @@ export interface QfTrainRun {
 export interface QfScreenshotRef {
   path: string;
   url: string;
+}
+
+export interface QfSuiteRunSummary {
+  id: number;
+  suiteId: number;
+  suiteName: string;
+  trainRunId: number | null;
+  status: string;
+  mode: QfMode;
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+  testCount: number;
+  passed: number;
+  failed: number;
+}
+
+export interface QfTrainRunSummary {
+  id: number;
+  trainId: number;
+  trainName: string;
+  status: string;
+  mode: QfMode;
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+  suiteCount: number;
+}
+
+export interface QfRunStepDetail {
+  idx: number;
+  status: "passed" | "failed" | "skipped";
+  intent: string | null;
+  detail: Record<string, unknown> | null;
+}
+
+export interface QfTestRunDetail {
+  runId: number;
+  testId: number;
+  testName: string;
+  suiteRunId: number | null;
+  status: string;
+  llmCalls: number;
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+  steps: QfRunStepDetail[];
+  screenshots: QfScreenshotRef[];
 }
 
 export interface QfActionTrace {
@@ -328,6 +377,22 @@ export async function listSuiteRuns(suiteId: number): Promise<{ runs: QfRun[] }>
 
 export async function getSuiteRun(id: number): Promise<{ suiteRun: QfSuiteRun }> {
   return authedFetch<{ suiteRun: QfSuiteRun }>(`/suite-runs/${id}`);
+}
+
+export async function listSuiteRunsPage(request: { limit: number; offset: number }): Promise<{ runs: QfSuiteRunSummary[]; hasMore: boolean }> {
+  return authedFetch<{ runs: QfSuiteRunSummary[]; hasMore: boolean }>(`/suite-runs?limit=${request.limit}&offset=${request.offset}`);
+}
+
+export async function listTrainRunsPage(request: { limit: number; offset: number }): Promise<{ runs: QfTrainRunSummary[]; hasMore: boolean }> {
+  return authedFetch<{ runs: QfTrainRunSummary[]; hasMore: boolean }>(`/train-runs?limit=${request.limit}&offset=${request.offset}`);
+}
+
+export async function getTrainRunSuites(trainRunId: number): Promise<{ suiteRuns: QfSuiteRunSummary[] }> {
+  return authedFetch<{ suiteRuns: QfSuiteRunSummary[] }>(`/train-runs/${trainRunId}/suites`);
+}
+
+export async function getTestRun(runId: number): Promise<{ run: QfTestRunDetail }> {
+  return authedFetch<{ run: QfTestRunDetail }>(`/test-runs/${runId}`);
 }
 
 export async function listSuiteScreenshots(suiteRunId: number): Promise<{ screenshots: QfScreenshotRef[] }> {
