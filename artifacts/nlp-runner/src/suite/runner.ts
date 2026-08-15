@@ -21,6 +21,31 @@ export function resolveMode(members: readonly { parallel: boolean }[]): SuiteMod
   return hasParallel ? "parallel" : "sequential";
 }
 
+/**
+ * Partition ordered members into execution groups. A suite/train is a sequence
+ * of groups: a member with `parallel: false` is its own group of one; runs of
+ * consecutive `parallel: true` members form a single parallel group. Groups
+ * execute strictly one after another, so a parallel group behaves as one unit
+ * placed inside the surrounding sequence.
+ */
+export function partitionIntoGroups<T>(members: readonly T[], isParallel: (member: T) => boolean): T[][] {
+  const groups: T[][] = [];
+  let parallelGroup: T[] | null = null;
+  for (const member of members) {
+    if (isParallel(member)) {
+      (parallelGroup ??= []).push(member);
+    } else {
+      if (parallelGroup !== null) {
+        groups.push(parallelGroup);
+        parallelGroup = null;
+      }
+      groups.push([member]);
+    }
+  }
+  if (parallelGroup !== null) groups.push(parallelGroup);
+  return groups;
+}
+
 export interface SuiteStepEvent {
   type: "step";
   suiteRunId: number;
@@ -168,21 +193,22 @@ export class SuiteRunner {
     };
 
     try {
-      // Sequential members run one at a time in order; parallel members run
-      // concurrently. Both share the global concurrency cap, so parallel tests
-      // may overlap sequential ones as long as the cap is respected.
+      // The suite is a sequence of groups. A parallel group's members run
+      // concurrently (capped); each group must fully complete before the next
+      // group in the sequence starts.
       const semaphore = new Semaphore(this.options.concurrency);
-      let seqTail = Promise.resolve();
-      const jobs = suite.tests.map((st) => {
-        const test = this.store.getTestWithSteps(st.testId);
-        if (!test) throw new Error(`Test #${st.testId} not found`);
-        if (st.parallel) return semaphore.run(() => runOne(test));
-        seqTail = seqTail.then(() => semaphore.run(() => runOne(test)));
-        return seqTail;
-      });
-      const settled = await Promise.allSettled(jobs);
-      const firstError = settled.find((r) => r.status === "rejected")?.reason;
-      if (firstError !== undefined) return fail(firstError);
+      const groups = partitionIntoGroups(suite.tests, (st) => st.parallel);
+      for (const group of groups) {
+        if (signal?.aborted) throw aborted(signal.reason);
+        const tests = group.map((st) => {
+          const test = this.store.getTestWithSteps(st.testId);
+          if (!test) throw new Error(`Test #${st.testId} not found`);
+          return test;
+        });
+        const settled = await Promise.allSettled(tests.map((test) => semaphore.run(() => runOne(test))));
+        const firstError = settled.find((r) => r.status === "rejected")?.reason;
+        if (firstError !== undefined) return fail(firstError);
+      }
     } catch (err) {
       return fail(err);
     }
@@ -201,6 +227,7 @@ export class SuiteRunner {
       const replayOptions: ReplayOptions = {
         screenshotDir,
         healer: this.options.healer,
+        completionHint: test.completionHint ?? undefined,
         suiteRunId,
         onEvent: (event) => {
           if (event.type !== "step") return;
@@ -304,18 +331,16 @@ export class TrainRunner {
     };
 
     try {
-      // Sequential suites run one at a time in order; parallel suites run
-      // concurrently, sharing the suite-level concurrency cap.
+      // The train is a sequence of groups; parallel suites in a group run
+      // concurrently (capped) and each group completes before the next starts.
       const semaphore = new Semaphore(this.trainConcurrency(train.suites.length));
-      let seqTail = Promise.resolve();
-      const jobs = train.suites.map((entry) => {
-        if (entry.parallel) return semaphore.run(() => runSuite(entry.suiteId));
-        seqTail = seqTail.then(() => semaphore.run(() => runSuite(entry.suiteId)));
-        return seqTail;
-      });
-      const settled = await Promise.allSettled(jobs);
-      const firstError = settled.find((r) => r.status === "rejected")?.reason;
-      if (firstError !== undefined) return fail(firstError);
+      const groups = partitionIntoGroups(train.suites, (entry) => entry.parallel);
+      for (const group of groups) {
+        if (signal?.aborted) throw aborted(signal.reason);
+        const settled = await Promise.allSettled(group.map((entry) => semaphore.run(() => runSuite(entry.suiteId))));
+        const firstError = settled.find((r) => r.status === "rejected")?.reason;
+        if (firstError !== undefined) return fail(firstError);
+      }
     } catch (err) {
       return fail(err);
     }

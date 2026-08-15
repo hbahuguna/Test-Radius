@@ -38,7 +38,10 @@ export function resolveElement(
 
   // Interactive elements eligible for text-based matching. Kept broad so tabs,
   // menu items, and custom roles are found in addition to plain links/buttons.
-  const TEXT_SEARCH_SEL = 'button,a,summary,[role="tab"],[role="button"],[role="link"],[role="menuitem"],[role="option"],li';
+  // Submit/button inputs are included too: an `<input type="submit" value="SUBSCRIBE">`
+  // has no textContent, so without value-matching the text="..." locator could
+  // never resolve it.
+  const TEXT_SEARCH_SEL = 'button,a,summary,input[type="submit"],input[type="button"],input[type="reset"],[role="tab"],[role="button"],[role="link"],[role="menuitem"],[role="option"],li';
 
   for (const loc of locators) {
     let el: Element | null = null;
@@ -46,9 +49,34 @@ export function resolveElement(
       const needle = loc.slice(6, -1);
       const all = document.querySelectorAll(TEXT_SEARCH_SEL);
       for (let i = 0; i < all.length; i++) {
-        if ((all[i].textContent ?? "").trim() === needle) {
-          el = all[i];
+        const candidate = all[i] as Element;
+        if ((candidate.textContent ?? "").trim() === needle) {
+          el = candidate;
           break;
+        }
+        if (
+          candidate instanceof HTMLInputElement &&
+          (candidate.value ?? "").trim() === needle
+        ) {
+          el = candidate;
+          break;
+        }
+      }
+      if (!el) {
+        const needleLower = needle.toLowerCase();
+        for (let i = 0; i < all.length; i++) {
+          const candidate = all[i] as Element;
+          if ((candidate.textContent ?? "").trim().toLowerCase() === needleLower) {
+            el = candidate;
+            break;
+          }
+          if (
+            candidate instanceof HTMLInputElement &&
+            (candidate.value ?? "").trim().toLowerCase() === needleLower
+          ) {
+            el = candidate;
+            break;
+          }
         }
       }
     } else {

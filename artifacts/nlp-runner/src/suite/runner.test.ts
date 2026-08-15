@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase } from "../cache/db.js";
 import { DataStore } from "../cache/queries.js";
+import type { Page } from "../browser/session.js";
 import { resolveMode, SuiteRunner, TrainRunner, type RunTestFn, type SuiteStepEvent } from "./runner.js";
 
 const tempDirs: string[] = [];
@@ -122,6 +123,51 @@ describe("SuiteRunner (sequential)", () => {
     expect(loaded.runs.map((r) => r.status)).toEqual(["passed", "failed", "passed"]);
   });
 
+  it("defaultRunTest forwards completionHint so an already-achieved goal short-circuits", async () => {
+    const store = makeStore();
+    const saved = store.saveTest({
+      name: "subscribe",
+      source: "recorder",
+      entryUrl: "https://example.test",
+      stepHash: "h-sub",
+      query: "subscribe",
+      steps: [
+        { action: "navigate", value: "https://example.test", selector: null },
+        { action: "click", selector: 'text="SUBSCRIBE"', locators: ['text="SUBSCRIBE"', "#subscribe"] },
+      ],
+      slots: [],
+    });
+    store.updateCompletionHint(saved.id, "Thanks for signing up to the Mitie Newsletter. You");
+    const suite = store.createSuite({ name: "S" });
+    store.setSuiteTests(suite.id, [{ testId: saved.id, parallel: false }]);
+
+    // The real defaultRunTest path (no runTestFn override): a stub page that
+    // only serves the completion-hint body-text check. If completionHint were
+    // dropped, the engine would try to execute the steps against this stub and
+    // fail — so a passing suite proves the hint is forwarded.
+    const stubPage = {
+      evaluate: async <T>(_fn: string | ((...args: unknown[]) => T)): Promise<T> =>
+        ("Thanks for signing up to the Mitie Newsletter. Your subscription is confirmed." as unknown) as T,
+    };
+    let closed = false;
+    const runner = new SuiteRunner(store, {
+      launch: async () => ({
+        page: stubPage as unknown as Page,
+        close: async () => { closed = true; },
+      }),
+      screenshotBaseDir: join(tmpdir(), "qf-screens"),
+      concurrency: 1,
+    });
+
+    const suiteRun = await runner.runSuite(suite.id, {});
+
+    expect(suiteRun.status).toBe("passed");
+    expect(closed).toBe(true);
+    const loaded = store.getSuiteRunWithRuns(suiteRun.id)!;
+    expect(loaded.runs).toHaveLength(1);
+    expect(loaded.runs[0].status).toBe("passed");
+  });
+
   it("emits test-done and suite-done events", async () => {
     const store = makeStore();
     const suiteId = seedSuite(store, ["A"]);
@@ -191,69 +237,67 @@ describe("SuiteRunner (parallel)", () => {
 describe("SuiteRunner (mixed parallel + sequential)", () => {
   const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-  it("serializes sequential members in order while parallel members overlap them", async () => {
-    const store = makeStore();
-    // A + C parallel, B + D sequential.
-    const suiteId = seedSuite(store, ["A", "B", "C", "D"], [true, false, true, false]);
-    const order: string[] = [];
-    let totalInFlight = 0;
-    let totalPeak = 0;
-    const fn: RunTestFn = async (test) => {
-      order.push(test.name);
-      totalInFlight++;
-      totalPeak = Math.max(totalPeak, totalInFlight);
-      await delay(40);
-      totalInFlight--;
-      return {
-        runId: 0,
-        testId: test.id,
-        success: true,
-        steps: [],
-        extracted: {},
-        llmCalls: 0,
-        selfHealed: 0,
-        selfHealedSteps: [],
-      };
-    };
-
-    await makeRunner(store).runSuite(suiteId, { runTestFn: fn });
-
-    // Sequential members B and D never overlap each other.
-    expect(order.indexOf("B")).toBeLessThan(order.indexOf("D"));
-    // Parallel members overlapped the sequential chain, so peak exceeded 1.
-    expect(totalPeak).toBeGreaterThan(1);
+  const successResult = (testId: number) => ({
+    runId: 0,
+    testId,
+    success: true,
+    steps: [],
+    extracted: {},
+    llmCalls: 0,
+    selfHealed: 0,
+    selfHealedSteps: [],
   });
 
-  it("never lets sequential members run concurrently with each other", async () => {
+  it("runs a parallel group as one unit: it completes before the next group starts", async () => {
     const store = makeStore();
-    const suiteId = seedSuite(store, ["A", "B", "C", "D"], [true, false, true, false]);
-    let seqInFlight = 0;
-    let seqPeak = 0;
-    const delay2 = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-    const suite = store.getSuiteWithTests(suiteId)!;
-    const seqIds = new Set(suite.tests.filter((t) => !t.parallel).map((t) => t.testId));
+    // A sequential, B+C a parallel group, D sequential.
+    const suiteId = seedSuite(store, ["A", "B", "C", "D"], [false, true, true, false]);
+    const started: string[] = [];
+    const finished: string[] = [];
+    let inFlight = 0;
+    let peak = 0;
     const fn: RunTestFn = async (test) => {
-      if (seqIds.has(test.id)) {
-        seqInFlight++;
-        seqPeak = Math.max(seqPeak, seqInFlight);
-      }
-      await delay2(40);
-      if (seqIds.has(test.id)) seqInFlight--;
-      return {
-        runId: 0,
-        testId: test.id,
-        success: true,
-        steps: [],
-        extracted: {},
-        llmCalls: 0,
-        selfHealed: 0,
-        selfHealedSteps: [],
-      };
+      started.push(test.name);
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await delay(40);
+      inFlight--;
+      finished.push(test.name);
+      return successResult(test.id);
     };
 
     await makeRunner(store).runSuite(suiteId, { runTestFn: fn });
 
-    expect(seqPeak).toBe(1);
+    // B and C ran concurrently inside the group.
+    expect(peak).toBe(2);
+    // A completes before the parallel group starts.
+    expect(finished.indexOf("A")).toBeLessThan(started.indexOf("B"));
+    expect(finished.indexOf("A")).toBeLessThan(started.indexOf("C"));
+    // D starts only after the whole parallel group finished.
+    expect(finished.indexOf("B")).toBeLessThan(started.indexOf("D"));
+    expect(finished.indexOf("C")).toBeLessThan(started.indexOf("D"));
+  });
+
+  it("treats non-adjacent parallel members as separate groups that never overlap", async () => {
+    const store = makeStore();
+    // A and C are parallel but separated by B, so each is its own group of one.
+    const suiteId = seedSuite(store, ["A", "B", "C"], [true, false, true]);
+    const order: string[] = [];
+    let inFlight = 0;
+    let peak = 0;
+    const fn: RunTestFn = async (test) => {
+      order.push(test.name);
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await delay(40);
+      inFlight--;
+      return successResult(test.id);
+    };
+
+    await makeRunner(store).runSuite(suiteId, { runTestFn: fn });
+
+    expect(order).toEqual(["A", "B", "C"]);
+    expect(peak).toBe(1);
   });
 
   it("stores a resolved 'mixed' mode on the suite run", async () => {
@@ -276,13 +320,12 @@ describe("resolveMode", () => {
 });
 
 describe("TrainRunner", () => {
-  function seedTrain(store: DataStore, suiteParallel: Array<boolean | undefined> = []): number {
-    const s1 = seedSuite(store, ["A"]);
-    const s2 = seedSuite(store, ["B"]);
+  function seedTrain(store: DataStore, suiteParallel: Array<boolean | undefined> = [false, false]): number {
+    const suiteIds = suiteParallel.map((_, i) => seedSuite(store, [String.fromCharCode(65 + i)]));
     const train = store.createTrain({ name: "T" });
     store.setTrainSuites(
       train.id,
-      [s1, s2].map((suiteId, i) => ({ suiteId, parallel: suiteParallel[i] ?? false })),
+      suiteIds.map((suiteId, i) => ({ suiteId, parallel: suiteParallel[i] ?? false })),
     );
     return train.id;
   }
@@ -368,5 +411,42 @@ describe("TrainRunner", () => {
     expect(peak).toBe(2);
     expect(trainRun.status).toBe("passed");
     expect(trainRun.mode).toBe("parallel");
+  });
+
+  it("treats a parallel suite group as one unit within the sequence", async () => {
+    const store = makeStore();
+    // Suite A sequential, B+C parallel group, D sequential.
+    const trainId = seedTrain(store, [false, true, true, false]);
+    const started: string[] = [];
+    const finished: string[] = [];
+    let inFlight = 0;
+    let peak = 0;
+    const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    const fn: RunTestFn = async (test) => {
+      started.push(test.name);
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await delay(30);
+      inFlight--;
+      finished.push(test.name);
+      return {
+        runId: 0,
+        testId: test.id,
+        success: true,
+        steps: [],
+        extracted: {},
+        llmCalls: 0,
+        selfHealed: 0,
+        selfHealedSteps: [],
+      };
+    };
+
+    await new TrainRunner(store, makeRunner(store)).runTrain(trainId, { runTestFn: fn });
+
+    // B and C ran concurrently inside the group.
+    expect(peak).toBe(2);
+    // D only starts after both B and C suites finished.
+    expect(finished.indexOf("B")).toBeLessThan(started.indexOf("D"));
+    expect(finished.indexOf("C")).toBeLessThan(started.indexOf("D"));
   });
 });

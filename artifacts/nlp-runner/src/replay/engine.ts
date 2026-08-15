@@ -185,36 +185,42 @@ export class ReplayRunner {
 
     for (let i = 0; i < steps.length; i++) {
       // ── Completion-hint short-circuit ──────────────────────────────────────
-      // After the first navigate has loaded the page (i > 0), check whether
-      // the recorded success phrase is already visible. If so, skip all
-      // remaining steps and record the run as passed — making the test
-      // idempotent against one-time side effects (form submissions, etc.).
-      if (i > 0 && options.completionHint) {
-        try {
-          const bodyText = (await this.page.evaluate(() => document.body.innerText)) as string;
-          if (bodyText.includes(options.completionHint)) {
-            for (let k = i; k < steps.length; k++) {
-              const s = steps[k];
-              const skipIntent = stepToEnglish(s);
-              const detail = { reason: "goal already achieved" };
-              results.push({ idx: k, action: s.action, status: "skipped", intent: skipIntent, detail });
-              store.addRunStep(run.id, { idx: k, status: "skipped", detail });
-              options.onEvent?.({ type: "step", idx: k, status: "skipped", intent: skipIntent, detail, healed: null });
+      // Check before EVERY step (including the first: a test may start on a
+      // page that already shows the recorded success phrase) whether the
+      // recorded success text is visible. If so, skip all remaining steps and
+      // record the run as passed — making the test idempotent against one-time
+      // side effects (form submissions, etc.). Whitespace is normalized on
+      // both sides because innerText reflows whitespace while the stored hint
+      // is a truncated mid-sentence phrase.
+      if (options.completionHint) {
+        const hint = options.completionHint.replace(/\s+/g, " ").trim();
+        if (hint) {
+          try {
+            const bodyText = (await this.page.evaluate(() => document.body.innerText)) as string;
+            if (bodyText.replace(/\s+/g, " ").trim().includes(hint)) {
+              for (let k = i; k < steps.length; k++) {
+                const s = steps[k];
+                const skipIntent = stepToEnglish(s);
+                const detail = { reason: "goal already achieved" };
+                results.push({ idx: k, action: s.action, status: "skipped", intent: skipIntent, detail });
+                store.addRunStep(run.id, { idx: k, status: "skipped", detail });
+                options.onEvent?.({ type: "step", idx: k, status: "skipped", intent: skipIntent, detail, healed: null });
+              }
+              store.finishRun(run.id, "passed");
+              return {
+                runId: run.id,
+                testId: test.id,
+                success: true,
+                steps: results,
+                extracted,
+                llmCalls: currentLlmCalls,
+                selfHealed,
+                selfHealedSteps,
+              };
             }
-            store.finishRun(run.id, "passed");
-            return {
-              runId: run.id,
-              testId: test.id,
-              success: true,
-              steps: results,
-              extracted,
-              llmCalls: currentLlmCalls,
-              selfHealed,
-              selfHealedSteps,
-            };
+          } catch {
+            // page.evaluate can fail if the page is mid-navigation; just proceed
           }
-        } catch {
-          // page.evaluate can fail if the page is mid-navigation; just proceed
         }
       }
       // ──────────────────────────────────────────────────────────────────────
@@ -456,6 +462,65 @@ export class ReplayRunner {
     };
   }
 
+  /**
+   * Deterministic last resort for a locator miss: rediscover the element via
+   * the page's accessibility tree, matching the accessible name against text
+   * clues from the step (text="..." locators, the quoted intent, the step
+   * value). Mirrors the clue-extraction logic used by the LLM healer, but
+   * without an LLM. Exact name matches are preferred; a "contains" match is
+   * only adopted when it identifies exactly one visible element. Returns null
+   * when nothing matches unambiguously or the candidate's ref does not resolve.
+   */
+  private async resolveByAccessibleName(step: Step): Promise<{ selector: string; fingerprintMatch: boolean } | null> {
+    const clues: string[] = [];
+    for (const loc of step.locators ?? []) {
+      if (loc.startsWith('text="')) clues.push(loc.slice(6, -1));
+    }
+    const intent = stepToEnglish(step);
+    const quoted = /"([^"]+)"/.exec(intent);
+    if (quoted) clues.push(quoted[1]);
+    if (step.value) clues.push(step.value);
+
+    let nodes;
+    try {
+      nodes = await this.page.getAccessibilitySnapshot();
+    } catch {
+      return null;
+    }
+
+    for (const clue of clues) {
+      const needle = clue.toLowerCase().trim();
+      if (!needle) continue;
+      const visible = nodes.filter((n) => !n.hidden);
+      const exact = visible.find((n) => n.name.toLowerCase().trim() === needle);
+      if (exact) {
+        const res = await this.tryResolveRef(exact.ref);
+        if (res) return res;
+        continue;
+      }
+      const contains = visible.filter(
+        (n) => n.name.toLowerCase().includes(needle) || needle.includes(n.name.toLowerCase()),
+      );
+      if (contains.length === 1) {
+        const res = await this.tryResolveRef(contains[0].ref);
+        if (res) return res;
+      }
+    }
+    return null;
+  }
+
+  private async tryResolveRef(ref: string): Promise<{ selector: string; fingerprintMatch: boolean } | null> {
+    try {
+      const res: ResolveResult = await this.page.evaluate(resolveElement, [ref], null);
+      if (res && res.found && res.selector) {
+        return { selector: res.selector, fingerprintMatch: res.fingerprintMatch };
+      }
+    } catch {
+      /* fall through to null */
+    }
+    return null;
+  }
+
   private async resolveWithHeal(
     step: Step,
     opts: { retryDelayMs: number; resolveTimeoutMs: number; healer?: StepHealer },
@@ -504,9 +569,14 @@ export class ReplayRunner {
 
     // No healer wired: accept a drifted fallback locator if one resolved (so a
     // removed stable attribute still replays via a fallback locator), otherwise
+    // try a deterministic last resort: find the element by its accessible name
+    // (covers text="..." clicks whose target moved or is an <input type=submit>
+    // whose text locator no longer matches). Only if that also fails do we
     // surface the original miss.
     if (!opts.healer) {
       if (resolved) return { ...resolved, healed: null };
+      const byName = await this.resolveByAccessibleName(step);
+      if (byName) return { ...byName, healed: null };
       throw missError();
     }
 

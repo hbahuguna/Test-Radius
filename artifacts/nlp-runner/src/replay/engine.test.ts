@@ -88,6 +88,16 @@ class FakePage implements Pick<Page, "evaluate" | "click" | "fill" | "select" | 
    /** when set, element is hidden until this many visibility checks have
     * happened (then stays visible). Undefined keeps `visible` behavior. */
    visibleFlipAfter?: number = undefined;
+   /** return value for the completion-hint body-text check. */
+   bodyTextValue = "Thanks for signing up to the Mitie Newsletter.";
+   /** accessibility-tree snapshot for the deterministic last-resort search. */
+   accessibilitySnapshotValue: {
+     ref: string;
+     role: string;
+     name: string;
+     bounds: { x: number; y: number; width: number; height: number };
+     hidden?: boolean;
+   }[] = [];
 
 
   async navigate(url: string): Promise<void> {
@@ -120,6 +130,12 @@ class FakePage implements Pick<Page, "evaluate" | "click" | "fill" | "select" | 
 
   async screenshot(): Promise<string> {
     return "png";
+  }
+
+  async getAccessibilitySnapshot(): Promise<
+    { ref: string; role: string; name: string; bounds: { x: number; y: number; width: number; height: number }; hidden?: boolean }[]
+  > {
+    return this.accessibilitySnapshotValue;
   }
 
   async evaluate<T = unknown>(
@@ -160,6 +176,9 @@ class FakePage implements Pick<Page, "evaluate" | "click" | "fill" | "select" | 
     }
     if (body.includes("querySelector(sel)") && body.includes(".value")) {
       return this.textValue as T;
+    }
+    if (body.includes("innerText")) {
+      return this.bodyTextValue as T;
     }
     throw new Error(`FakePage.evaluate: unexpected function ${body.slice(0, 60)}`);
   }
@@ -477,6 +496,101 @@ describe("ReplayRunner.runTest", () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain("Timed out waiting");
     expect(page.clicks).toHaveLength(0);
+  });
+});
+
+describe("ReplayRunner completion hint", () => {
+  it("short-circuits on the completion hint even before the first step", async () => {
+    const store = makeStore();
+    const page = new FakePage();
+    const test = makeTest(store, [
+      makeStep({ action: "click" }),
+      makeStep({ action: "fill", selector: "#signup-name", value: "Ada", locators: ["#signup-name"] }),
+    ]);
+
+    const result = await new ReplayRunner(page as unknown as Page).runTest(store, test, {
+      completionHint: "Thanks for signing up to the Mitie Newsletter.",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.steps.map((s) => s.status)).toEqual(["skipped", "skipped"]);
+    expect(result.steps[0]?.detail).toEqual({ reason: "goal already achieved" });
+    expect(page.clicks).toHaveLength(0);
+    expect(page.fills).toHaveLength(0);
+    const run = store.getRun(result.runId)!;
+    expect(run.status).toBe("passed");
+  });
+
+  it("matches the completion hint despite whitespace differences in the page text", async () => {
+    const store = makeStore();
+    const page = new FakePage();
+    page.bodyTextValue = "Thanks   for signing\n\nup to the Mitie Newsletter. Your\nsubscription is confirmed.";
+    const test = makeTest(store, [makeStep({ action: "click" })]);
+
+    const result = await new ReplayRunner(page as unknown as Page).runTest(store, test, {
+      completionHint: "Thanks for signing up to the Mitie Newsletter. You",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.steps[0]?.status).toBe("skipped");
+  });
+
+  it("does not short-circuit when the hint is absent from the page", async () => {
+    const store = makeStore();
+    const page = new FakePage();
+    page.bodyTextValue = "Create your account";
+    const test = makeTest(store, [makeStep({ action: "click" })]);
+
+    const result = await new ReplayRunner(page as unknown as Page).runTest(store, test, {
+      completionHint: "Thanks for signing up to the Mitie Newsletter.",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.steps[0]?.status).toBe("passed");
+    expect(page.clicks).toEqual(['text="Create account"']);
+  });
+});
+
+describe("ReplayRunner accessible-name last resort", () => {
+  it("recovers a click via accessible-name search when no healer is wired", async () => {
+    const store = makeStore();
+    const page = new FakePage();
+    // The recorded locators miss on the first resolve attempt; the AX-ref
+    // re-resolution (attempt 2) succeeds.
+    page.resolveFailTimes = 1;
+    page.accessibilitySnapshotValue = [
+      { ref: "[data-testid=subscribe]", role: "button", name: "SUBSCRIBE", bounds: { x: 0, y: 0, width: 100, height: 30 } },
+    ];
+    const test = makeTest(store, [
+      makeStep({ action: "click", locators: ['text="SUBSCRIBE"', "#subscribe"] }),
+    ]);
+
+    const result = await new ReplayRunner(page as unknown as Page).runTest(store, test, {
+      retryDelayMs: 0,
+      resolveTimeoutMs: 0,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.selfHealed).toBe(0);
+    expect(page.clicks).toEqual(["[data-testid=subscribe]"]);
+  });
+
+  it("still fails when the accessible-name search finds nothing", async () => {
+    const store = makeStore();
+    const page = new FakePage();
+    page.resolveFailTimes = 10; // recorded locators never resolve
+    page.accessibilitySnapshotValue = [
+      { ref: "#other", role: "button", name: "Order now", bounds: { x: 0, y: 0, width: 100, height: 30 } },
+    ];
+    const test = makeTest(store, [makeStep({ action: "click", locators: ['text="SUBSCRIBE"', "#subscribe"] })]);
+
+    const result = await new ReplayRunner(page as unknown as Page).runTest(store, test, {
+      retryDelayMs: 0,
+      resolveTimeoutMs: 0,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/no element matches/);
   });
 });
 

@@ -137,4 +137,53 @@ describe.runIf(integration)("resolveElement fingerprint parity + ordering", () =
     expect(res.selector).toBeNull();
     expect(res.fingerprintMatch).toBe(false);
   }, 90_000);
+
+  it("text locator resolves an <input type=submit> by its value attribute", async () => {
+    const session = await newSession();
+    const page = await session.newPage();
+    await page.evaluate(() => {
+      document.body.innerHTML =
+        '<form><input type="submit" value="SUBSCRIBE" data-testid="sub"></form>';
+    });
+    const res = await page.evaluate(resolveElement, ['text="SUBSCRIBE"'], null);
+
+    expect(res.found).toBe(true);
+    expect(res.selector).toBe('text="SUBSCRIBE"');
+    expect(res.matchedLocator).toBe('text="SUBSCRIBE"');
+  }, 90_000);
+
+  it("text locator matches case-insensitively as a fallback", async () => {
+    const session = await newSession();
+    const page = await session.newPage();
+    await page.evaluate(() => {
+      document.body.innerHTML = '<button type="submit">Subscribe</button>';
+    });
+    const res = await page.evaluate(resolveElement, ['text="SUBSCRIBE"'], null);
+
+    expect(res.found).toBe(true);
+  }, 90_000);
+
+  it("text locator matches an input value case-insensitively", async () => {
+    const session = await newSession();
+    const page = await session.newPage();
+    await page.evaluate(() => {
+      document.body.innerHTML = '<input type="submit" value="Subscribe">';
+    });
+    const res = await page.evaluate(resolveElement, ['text="SUBSCRIBE"'], null);
+
+    expect(res.found).toBe(true);
+  }, 90_000);
+
+  it("exact text match is preferred over a case-insensitive one", async () => {
+    const session = await newSession();
+    const page = await session.newPage();
+    await page.evaluate(() => {
+      document.body.innerHTML =
+        '<button id="a">CREATE ACCOUNT</button><button id="b">Create account</button>';
+    });
+    const res = await page.evaluate(resolveElement, ['text="Create account"'], null);
+
+    expect(res.found).toBe(true);
+    expect(res.selector).toBe('text="Create account"');
+  }, 90_000);
 });

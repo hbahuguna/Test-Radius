@@ -23,7 +23,7 @@ import {
 import { toast } from "sonner";
 import { Play, Plus, RefreshCw, Square, Trash2, Settings2 } from "lucide-react";
 import { SuiteRunCard } from "./SuiteRunCard";
-import { BucketsEditor, type BucketItem, type BucketMember } from "./BucketsEditor";
+import { BucketsEditor, MemberGroupChips, partitionMembers, type BucketItem, type BucketMember } from "./BucketsEditor";
 
 interface LogLine {
   label: string;
@@ -186,7 +186,7 @@ export function SuitesPanel() {
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
             Suites
-            <span className="text-muted-foreground font-normal">(assign tests to Sequential or Parallel buckets per test)</span>
+            <span className="text-muted-foreground font-normal">(sequence of steps; group 2+ tests to run in parallel)</span>
             <Button variant="ghost" size="sm" onClick={() => setShowCreate((v) => !v)} className="ml-auto text-xs h-6">
               <Plus className="size-3.5 mr-1" /> New suite
             </Button>
@@ -262,25 +262,10 @@ export function SuitesPanel() {
                         </div>
                       </div>
                     ) : (
-                      <div className="flex flex-wrap gap-1.5">
-                        {suite.tests.length === 0 ? (
-                          <span className="text-xs text-muted-foreground">No tests assigned</span>
-                        ) : (
-                          suite.tests.map((t) => (
-                            <span
-                              key={t.suiteTestId}
-                              className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded border ${
-                                t.parallel
-                                  ? "border-blue-700/30 bg-blue-900/15 text-blue-300"
-                                  : "border-amber-700/30 bg-amber-900/15 text-amber-300"
-                              }`}
-                              title={t.parallel ? "Runs in parallel" : "Runs in sequence"}
-                            >
-                              {t.parallel ? "\u22a5" : "\u2192"} {t.name}
-                            </span>
-                          ))
-                        )}
-                      </div>
+                      <MemberGroupChips
+                        groups={partitionMembers(suite.tests.map((t) => ({ id: t.testId, parallel: t.parallel })))}
+                        getLabel={(id) => suite.tests.find((t) => t.testId === id)?.name ?? `#${id}`}
+                      />
                     )}
 
                     {runningSuite === suite.id && (

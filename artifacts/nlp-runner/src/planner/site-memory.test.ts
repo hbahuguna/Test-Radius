@@ -15,7 +15,7 @@ function makeStore() {
 
 const testRow = (id: number, url: string, q: string): Test => ({
   id, name: "t", source: "recorder", query: q, normalizedQuery: q, queryEmbedding: null,
-  entryUrl: url, stepHash: "h", description: null, createdAt: "", updatedAt: "",
+  entryUrl: url, stepHash: "h", description: null, completionHint: null, createdAt: "", updatedAt: "",
 });
 
 const step = (id: number, action: Step["action"]): Step => ({
