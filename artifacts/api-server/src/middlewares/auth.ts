@@ -104,8 +104,31 @@ async function verifySupabaseToken(token: string): Promise<SupabaseClaims | null
 /**
  * Resolve the authenticated user from the request. Supports DEMO_MODE for
  * local development without a real Supabase token.
+ *
+ * DEMO_MODE is only a fallback: when a real, verifiable Supabase token is
+ * present it ALWAYS wins, so logged-in users are scoped to their own account
+ * (API keys, runs, credits) instead of collapsing everyone into the shared
+ * demo user.
  */
 export async function resolveUser(req: Request): Promise<AuthedUser | null> {
+  const token = extractToken(req);
+
+  if (token) {
+    const claims = await verifySupabaseToken(token);
+    if (claims?.sub) {
+      const meta = claims.user_metadata ?? {};
+      return {
+        id: claims.sub,
+        email: claims.email ?? "",
+        fullName: meta.full_name ?? meta.name ?? null,
+        avatarUrl: meta.avatar_url ?? meta.picture ?? null,
+      };
+    }
+    // A token was supplied but failed verification — do not silently attribute
+    // the request to the demo user.
+    return null;
+  }
+
   if (DEMO_MODE) {
     return {
       id: "demo-user-id",
@@ -115,20 +138,7 @@ export async function resolveUser(req: Request): Promise<AuthedUser | null> {
     };
   }
 
-  const token = extractToken(req);
-  logger.info({ hasAuthHeader: !!req.headers.authorization, tokenPrefix: token?.slice(0, 15) }, "[resolveUser]");
-  if (!token) return null;
-
-  const claims = await verifySupabaseToken(token);
-  if (!claims?.sub) return null;
-
-  const meta = claims.user_metadata ?? {};
-  return {
-    id: claims.sub,
-    email: claims.email ?? "",
-    fullName: meta.full_name ?? meta.name ?? null,
-    avatarUrl: meta.avatar_url ?? meta.picture ?? null,
-  };
+  return null;
 }
 
 /**

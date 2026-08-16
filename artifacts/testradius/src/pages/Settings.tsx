@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -6,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Trash2, KeyRound, CreditCard, Coins } from "lucide-react";
+import { Trash2, KeyRound, CreditCard, Coins, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import {
   getApiKeys,
@@ -161,7 +162,15 @@ const load = async () => {
     <div className="min-h-[100dvh] w-full bg-background text-foreground pt-24 px-6 pb-16">
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center justify-between mb-8">
-          <h1 className="text-3xl font-bold">Settings</h1>
+          <div className="flex items-center gap-3">
+            <Link href="/queryfirst">
+              <Button variant="ghost" size="sm">
+                <ArrowLeft className="h-4 w-4 mr-1" />
+                Back
+              </Button>
+            </Link>
+            <h1 className="text-3xl font-bold">Settings</h1>
+          </div>
           <Button variant="outline" size="sm" onClick={() => signOut()}>
             Sign out
           </Button>

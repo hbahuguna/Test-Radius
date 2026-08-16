@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { Link } from "wouter";
 import { useAuth } from "@/lib/auth";
 import posthog from "@/lib/posthog";
 import { Button } from "@/components/ui/button";
@@ -65,7 +66,7 @@ function isValidScreenshot(s: string | null): s is string {
 }
 
 export function QueryFirst() {
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
 
   // Form state
   const [query, setQuery] = useState("register a user on the signup page");
@@ -583,6 +584,16 @@ const actionBadgeClass = (action: string) => {
             )}
             {status === "done" && !running && <span className="text-green-500 font-medium">Passed</span>}
             {status === "error" && !running && <span className="text-red-500 font-medium">Failed</span>}
+            <div className="flex items-center gap-2 ml-2">
+              <Link href="/settings">
+                <Button variant="ghost" size="sm">
+                  Settings
+                </Button>
+              </Link>
+              <Button variant="outline" size="sm" onClick={() => signOut()}>
+                Sign out
+              </Button>
+            </div>
           </div>
         </div>
 

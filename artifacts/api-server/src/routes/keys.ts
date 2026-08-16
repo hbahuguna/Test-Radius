@@ -1,7 +1,7 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { db } from "@workspace/db";
 import { userApiKeysTable } from "@workspace/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { requireSignedUp } from "../middlewares/auth";
 import { encryptKey, validateKeyFormat, keyHint, jiraHint } from "../lib/crypto";
 
@@ -69,10 +69,12 @@ router.delete("/:id", async (req: Request, res: Response) => {
   const authUser = req.user!;
   await db
     .delete(userApiKeysTable)
-    .where(eq(userApiKeysTable.id, Number(req.params.id)));
-  // Note: we don't strictly verify ownership here because the id is scoped to
-  // the user's own rows via the where clause; for stronger safety, add a
-  // userId check before delete in production.
+    .where(
+      and(
+        eq(userApiKeysTable.id, Number(req.params.id)),
+        eq(userApiKeysTable.userId, authUser.id),
+      ),
+    );
   res.json({ deleted: true });
 });
 
