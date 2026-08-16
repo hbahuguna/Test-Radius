@@ -7,6 +7,7 @@ import { ReplayRunner } from "./replay/engine.js";
 import { OpenAIChatClient } from "./llm/client.js";
 import { LLMStepHealer } from "./replay/heal.js";
 import type { LaunchOptions } from "./browser/launch.js";
+import { detectGoogleSignIn } from "./browser/google-signin.js";
 import { runRecord, formatRecordReport } from "./planner/record-cli.js";
 import { createMatcher } from "./embeddings/matcher.js";
 import { embedCached } from "./embeddings/embed.js";
@@ -263,7 +264,10 @@ export async function resolveRunTarget(
 async function runRecordCommand(store: DataStore, parsed: RunCommandArgs): Promise<number> {
   const config = loadConfig();
   const llm = new OpenAIChatClient(config.llm);
-  const opts = { headless: true, chromePath: config.chromePath === "auto" ? undefined : config.chromePath };
+  // Google blocks sign-in in headless Chrome, so a task that signs in/up with
+  // Google forces a visible window regardless of --headful.
+  const google = detectGoogleSignIn({ query: parsed.target, url: parsed.entryUrl ?? undefined });
+  const opts = { headless: !(parsed.headful || google), chromePath: config.chromePath === "auto" ? undefined : config.chromePath };
   const { ok, report } = await runRecord(store, llm, parsed.target, opts as LaunchOptions, {
     confirm: parsed.confirm,
     auto: parsed.auto,
@@ -381,7 +385,7 @@ export async function runBrowse(
   let session;
   try {
     session = await BrowserSession.launch({
-      headless: !parsed.headful,
+      headless: !(parsed.headful || detectGoogleSignIn({ query: parsed.task })),
       timeoutMs: 30_000,
     });
     const agent = new LiveAgent({
@@ -483,7 +487,7 @@ async function replayTest(
   let session;
   try {
     session = await BrowserSession.launch({
-      headless: !parsed.headful,
+      headless: !(parsed.headful || detectGoogleSignIn({ query: queryForRefill ?? parsed.target, url: test.entryUrl ?? undefined })),
       timeoutMs: 20_000,
     });
     const page = await session.newPage();

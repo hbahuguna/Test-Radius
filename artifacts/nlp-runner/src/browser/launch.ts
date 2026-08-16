@@ -60,7 +60,14 @@ export function buildLaunchArgs(options: {
     "--no-first-run",
     "--no-default-browser-check",
     `--window-size=${vw},${vh}`,
-    ...(options.headless ? ["--headless=new"] : []),
+    ...(options.headless
+      ? ["--headless=new"]
+      : [
+          // Headful windows must not expose automation signals: Google blocks
+          // sign-in ("this browser or app may not be secure") when the page
+          // can read `navigator.webdriver` and friends.
+          "--disable-blink-features=AutomationControlled",
+        ]),
   ];
 }
 

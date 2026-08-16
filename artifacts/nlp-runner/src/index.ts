@@ -84,6 +84,11 @@ export {
 } from "./browser/launch.js";
 export type { LaunchedBrowser, LaunchOptions } from "./browser/launch.js";
 export {
+  detectGoogleSignIn,
+  isGoogleSignInUrl,
+  mentionsGoogleSignIn,
+} from "./browser/google-signin.js";
+export {
   MAX_NAME_CHARS,
   MAX_NAME_WORDS,
   summarizeTestName,

@@ -63,6 +63,15 @@ describe("buildLaunchArgs", () => {
     expect(args).toContain("--window-size=1280,720");
   });
 
+  it("disables automation-controlled features in headful mode only", () => {
+    expect(
+      buildLaunchArgs({ headless: false, port: 0, userDataDir: "/tmp/profile" }),
+    ).toContain("--disable-blink-features=AutomationControlled");
+    expect(
+      buildLaunchArgs({ headless: true, port: 0, userDataDir: "/tmp/profile" }),
+    ).not.toContain("--disable-blink-features=AutomationControlled");
+  });
+
   it("respects custom viewport dimensions", () => {
     const args = buildLaunchArgs({
       headless: true,
