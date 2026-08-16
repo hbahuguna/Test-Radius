@@ -519,7 +519,7 @@ router.get("/active-run", async (req: Request, res: Response) => {
 // POST /queryfirst/record — SSE: record a new test using browser-use agent + shadow CDP recorder
 router.post("/record", async (req: Request, res: Response) => {
   const authUser = req.user!;
-  const { query, entry_url, variables, model_id, provider, api_key, use_vision, max_steps } = req.body ?? {};
+  const { query, entry_url, variables, model_id, provider, api_key, use_vision, max_steps, skip_dry_run } = req.body ?? {};
 
   if (!query || typeof query !== "string") {
     res.status(400).json({ error: "invalid_request", message: "query is required" });
@@ -711,12 +711,16 @@ router.post("/record", async (req: Request, res: Response) => {
             }
           }
 
-          // 7. Dry-run gate
-          const gateResult = await runDryRunGate(store, saved.id, variables);
+          // 7. Dry-run gate (skip if requested — recording right after the live
+          // run is state-dependent: cookies/session/subscriptions may have
+          // changed, making an immediate replay more likely to fail spuriously)
+          const gateResult = skip_dry_run
+            ? { success: true as const }
+            : await runDryRunGate(store, saved.id, variables);
           sseWrite(res, {
             event: "done",
             ok: gateResult.success,
-            testId: gateResult.success ? saved.id : undefined,
+            testId: saved.id,
             testName: generatedName,
             error: gateResult.success ? undefined : gateResult.error,
           });
@@ -753,11 +757,13 @@ router.post("/record", async (req: Request, res: Response) => {
           defaultValue: s.defaultValue ?? null,
         })),
       });
-      const gateResult = await runDryRunGate(store, saved.id, variables);
+      const gateResult = skip_dry_run
+        ? { success: true as const }
+        : await runDryRunGate(store, saved.id, variables);
       sseWrite(res, {
         event: "done",
         ok: gateResult.success,
-        testId: gateResult.success ? saved.id : undefined,
+        testId: saved.id,
         testName: generatedName,
         error: gateResult.success ? undefined : gateResult.error,
       });

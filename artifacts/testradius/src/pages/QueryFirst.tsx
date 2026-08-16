@@ -71,6 +71,7 @@ export function QueryFirst() {
   const [query, setQuery] = useState("register a user on the signup page");
   const [entryUrl, setEntryUrl] = useState("http://localhost:3123/signup");
   const [variables, setVariables] = useState('{"name":"Ada","email":"ada@example.com"}');
+  const [skipDryRun, setSkipDryRun] = useState(true);
   const [provider, setProvider] = useState("google");
   const [modelId, setModelId] = useState(defaultModelFor("google"));
   const [keys, setKeys] = useState<UserApiKey[]>([]);
@@ -256,9 +257,13 @@ export function QueryFirst() {
         setRunResult({ ok: event.ok, llmCalls: event.llmCalls, selfHealed: event.selfHealed, error: event.error, testId: event.testId });
         setStatus(event.ok ? "done" : "error");
         setMode("idle");
-        if (event.ok && event.testId) {
-          toast.success(`Test saved: ${event.testName ? `${event.testName} ` : ""}#${event.testId}`);
+        if (event.testId) {
           refreshTests();
+          if (event.ok) {
+            toast.success(`Test saved: ${event.testName ? `${event.testName} ` : ""}#${event.testId}`);
+          } else {
+            toast.error(`Test saved (#${event.testId}) but the post-recording validation failed${event.error ? `: ${event.error}` : ""}`);
+          }
         }
         if (event.ok && event.selfHealed && event.selfHealed > 0) {
           toast.success(`Replay passed with ${event.selfHealed} healed step(s)!`);
@@ -308,7 +313,7 @@ export function QueryFirst() {
     abortRef.current = new AbortController();
     try {
       await startRecord(
-        { query, entry_url: entryUrl, variables: vars, provider, model_id: modelId },
+        { query, entry_url: entryUrl, variables: vars, provider, model_id: modelId, skip_dry_run: skipDryRun },
         { onEvent: handleEvent, signal: abortRef.current.signal },
       );
     } catch (err) {
@@ -612,6 +617,10 @@ const actionBadgeClass = (action: string) => {
                   <Label className="text-xs">Variables (JSON)</Label>
                   <Input value={variables} onChange={(e) => setVariables(e.target.value)} disabled={running} className="text-sm font-mono" />
                 </div>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+                  <input type="checkbox" checked={skipDryRun} onChange={(e) => setSkipDryRun(e.target.checked)} disabled={running} />
+                  Skip validation after recording (page state may have changed)
+                </label>
                 <Button onClick={handleStartRecord} disabled={running} className="w-full">
                   <Play className="size-4 mr-1.5" /> Record
                 </Button>

@@ -373,7 +373,7 @@ async function streamPost(path: string, body: unknown, callbacks: StreamCallback
 }
 
 export function startRecord(
-  request: { query: string; entry_url?: string; variables?: Record<string, string>; provider?: string; model_id?: string; api_key?: string; use_vision?: boolean; max_steps?: number },
+  request: { query: string; entry_url?: string; variables?: Record<string, string>; provider?: string; model_id?: string; api_key?: string; use_vision?: boolean; max_steps?: number; skip_dry_run?: boolean },
   callbacks: StreamCallbacks,
 ): Promise<void> {
   return streamPost("/record", request, callbacks);
