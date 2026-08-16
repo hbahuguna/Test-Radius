@@ -1008,6 +1008,19 @@ router.post("/replay", async (req: Request, res: Response) => {
       },
     });
 
+    // Deterministically capture the final page state: the frontend's live
+    // browser view polls /screenshot, but that races the grace period and
+    // browser teardown — and during a navigation-triggering step the capture
+    // fails or returns a blank frame, so the last view users see is the page
+    // *before* the final step. Settle the page, then push the definitive
+    // screenshot over SSE so the live view always shows the final state.
+    await page.waitForSettled();
+    const finalShot = await captureScreenshot(page);
+    if (finalShot) {
+      active.latestScreenshot = finalShot;
+      sseWrite(res, { event: "screenshot", screenshot: finalShot });
+    }
+
     // Hold the run open for a grace period BEFORE signalling done: the frontend
     // stops screenshot-polling the moment it receives "done", and the browser is
     // torn down in the finally block — so without this, the final step's effect

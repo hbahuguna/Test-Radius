@@ -211,6 +211,7 @@ export type QfEvent =
   | { event: "record"; type: "guard"; turn: number; reason?: string }
   | { event: "record"; type: "error"; turn: number; error?: string }
   | { event: "replay"; type: "step" | "done"; idx: number; status: "passed" | "failed" | "skipped"; intent: string; detail: Record<string, unknown>; healed?: string | null; success?: boolean; error?: string }
+  | { event: "screenshot"; screenshot: string | null }
   | { event: "browse"; type: "step_start" | "action" | "guard" | "done"; step?: number; maxSteps?: number; thinking?: string; evaluation?: string; memory?: string; nextGoal?: string; actionIndex?: number; name?: string; params?: Record<string, unknown>; ok?: boolean; error?: string; message?: string; success?: boolean; text?: string; steps?: number; actions?: number; llmCalls?: number; errors?: string[] }
   | { event: "suite"; type: "step"; suiteRunId: number; testId: number; runId: number; idx: number; status: "passed" | "failed" | "skipped"; intent: string; detail: Record<string, unknown> }
   | { event: "suite"; type: "test-done"; suiteRunId: number; testId: number; runId: number; success: boolean; error?: string }

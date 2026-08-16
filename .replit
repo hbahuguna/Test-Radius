@@ -3,7 +3,7 @@ modules = ["nodejs-24", "python-base-3.13"]
 [deployment]
 router = "application"
 deploymentTarget = "autoscale"
-build = "PORT=3000 BASE_PATH=/ VITE_SUPABASE_URL=https://jimfkyiwtbzggmleolnw.supabase.co VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImppbWZreWl3dGJ6Z2dtbGVvbG53Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzODY0MzAsImV4cCI6MjA4ODk2MjQzMH0.OBAAe-bjIX-6z4ajIKpWpA9NiaT6IsGWyxZKlpggwKU pnpm --filter @workspace/testradius build && pnpm --filter @workspace/api-server build"
+build = "PORT=3000 BASE_PATH=/ VITE_SUPABASE_URL=https://jimfkyiwtbzggmleolnw.supabase.co VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImppbWZreWl3dGJ6Z2dtbGVvbG53Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzODY0MzAsImV4cCI6MjA4ODk2MjQzMH0.OBAAe-bjIX-6z4ajIKpWpA9NiaT6IsGWyxZKlpggwKU VITE_POSTHOG_KEY=phc_y48wNqNVvryi3iRPVqscHBU4f3hjPo8eSQps4s7gzwvY VITE_POSTHOG_HOST=https://us.i.posthog.com pnpm --filter @workspace/testradius build && pnpm --filter @workspace/api-server build"
 run = "PORT=3000 PUBLIC_DIR=artifacts/testradius/dist pnpm --filter @workspace/api-server run start"
 static = "artifacts/testradius/dist"
 

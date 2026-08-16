@@ -215,6 +215,11 @@ export function QueryFirst() {
           addStep({ label: `${event.idx + 1}. ${event.intent}`, status: healed ? "healed" : event.status, detail: healed ? `Healed → ${healed}` : event.status === "failed" ? (event.detail as { error?: string }).error : undefined, timestamp: Date.now() });
         }
         break;
+      case "screenshot":
+        if (event.screenshot && isValidScreenshot(event.screenshot)) {
+          setScreenshot(event.screenshot);
+        }
+        break;
       case "browse":
         if (event.type === "step_start") {
           const stepNum = (event.step ?? 0) + 1;

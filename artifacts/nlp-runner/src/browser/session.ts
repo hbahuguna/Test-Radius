@@ -527,6 +527,31 @@ export class Page {
   }
 
   /**
+   * Wait until the page has finished loading and rendering settles before a
+   * final screenshot is taken. Polls `document.readyState` until "complete"
+   * (tolerating transient evaluation failures while a navigation is in
+   * flight), then waits `extraMs` for lazy content to render.
+   */
+  async waitForSettled(
+    extraMs = 1200,
+    timeoutMs = 15_000,
+  ): Promise<void> {
+    const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      try {
+        const state = await this.evaluate<string>(() => document.readyState);
+        if (state === "complete") break;
+      } catch {
+        /* frame navigating; keep waiting */
+      }
+      if (Date.now() >= deadline) break;
+      await delay(250);
+    }
+    await delay(extraMs);
+  }
+
+  /**
    * Snapshot the page's accessible, interactive elements from
    * `Accessibility.getFullAXTree`. Returns one entry per element, pruned to
    * interactive/visible roles (button, textbox, link, checkbox, …): the
