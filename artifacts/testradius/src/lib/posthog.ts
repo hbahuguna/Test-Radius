@@ -17,6 +17,7 @@ if (!posthogKey || !posthogHost) {
   posthog.init(posthogKey, {
     api_host: posthogHost,
     defaults: "2026-05-30",
+    capture_pageview: true,
     capture_exceptions: {
       capture_unhandled_errors: true,
       capture_unhandled_rejections: true,
