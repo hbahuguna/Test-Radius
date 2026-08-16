@@ -42,6 +42,8 @@ import {
 const CHROME_WARMING_UP_MSG =
   "Chrome is still downloading on this server (first cold start takes ~3 minutes). Please wait a moment and try again.";
 
+const isHeadlessServer = process.platform === "linux" && !process.env.DISPLAY;
+
 /**
  * Prepend variable values to the recording goal so the browser-use agent
  * always uses the provided values when filling forms instead of inventing its
@@ -571,7 +573,7 @@ router.post("/record", async (req: Request, res: Response) => {
     // 1. Launch our own Chrome with a known debug port (or pipe if Google is detected)
     const google = detectGoogleSignIn({ query, url: entry_url });
     browserSession = await BrowserSession.launch({
-      headless: !google, // headful for Google sign-in
+      headless: isHeadlessServer ? true : !google, // headful for Google sign-in
       timeoutMs: 30_000,
       ...(google
         ? { pipe: true, chromePath: resolveGoogleChromePath() }
@@ -935,7 +937,7 @@ async function runDryRunGate(
 
   try {
     gateSession = await BrowserSession.launch({
-      headless: !google,
+      headless: isHeadlessServer ? true : !google,
       timeoutMs: 20_000,
       ...(google
         ? { pipe: true, chromePath: resolveGoogleChromePath() }
@@ -1009,7 +1011,7 @@ router.post("/replay", async (req: Request, res: Response) => {
       url: entry_url ?? test.entryUrl ?? undefined,
     });
     browserSession = await BrowserSession.launch({
-      headless: headful === true ? false : !google,
+      headless: isHeadlessServer ? true : (headful === true ? false : !google),
       timeoutMs: 20_000,
       ...(google
         ? { pipe: true, chromePath: resolveGoogleChromePath() }
@@ -1914,7 +1916,7 @@ router.post("/browse", async (req: Request, res: Response) => {
   try {
     const google = detectGoogleSignIn({ query, url: entry_url });
     browserSession = await BrowserSession.launch({
-      headless: !google, // headful for Google sign-in
+      headless: isHeadlessServer ? true : !google, // headful for Google sign-in
       timeoutMs: 30_000,
       ...(google
         ? { pipe: true, chromePath: resolveGoogleChromePath() }

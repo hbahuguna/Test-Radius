@@ -169,6 +169,8 @@ function googleLaunchOptions(config: Config): LaunchOptions {
   };
 }
 
+const isHeadlessServer = process.platform === "linux" && !process.env.DISPLAY;
+
 export interface RunCommandArgs {
   target: string;
   variables: Record<string, string>;
@@ -280,7 +282,7 @@ async function runRecordCommand(store: DataStore, parsed: RunCommandArgs): Promi
   // Google forces a visible window regardless of --headful.
   const google = detectGoogleSignIn({ query: parsed.target, url: parsed.entryUrl ?? undefined });
   const opts: LaunchOptions = {
-    headless: !(parsed.headful || google),
+    headless: isHeadlessServer ? true : !(parsed.headful || google),
     ...(google
       ? googleLaunchOptions(config)
       : config.chromePath === "auto"
@@ -405,7 +407,7 @@ export async function runBrowse(
   let session;
   try {
     session = await BrowserSession.launch({
-      headless: !(parsed.headful || google),
+      headless: isHeadlessServer ? true : !(parsed.headful || google),
       ...(google ? googleLaunchOptions(cfg) : {}),
       timeoutMs: 30_000,
     });
@@ -513,7 +515,7 @@ async function replayTest(
   let session;
   try {
     session = await BrowserSession.launch({
-      headless: !(parsed.headful || google),
+      headless: isHeadlessServer ? true : !(parsed.headful || google),
       ...(google ? googleLaunchOptions(config) : {}),
       timeoutMs: 20_000,
     });
