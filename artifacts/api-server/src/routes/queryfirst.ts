@@ -18,6 +18,8 @@ import {
   LiveAgent,
   ChromeLaunchError,
   stepToEnglish,
+  detectGoogleSignIn,
+  resolveGoogleChromePath,
   SuiteRunner,
   TrainRunner,
   resolveMode,
@@ -566,8 +568,17 @@ router.post("/record", async (req: Request, res: Response) => {
   let savedTestId: number | null = null;
 
   try {
-    // 1. Launch our own Chrome with a known debug port
-    browserSession = await BrowserSession.launch({ headless: true, timeoutMs: 30_000 });
+    // 1. Launch our own Chrome with a known debug port (or pipe if Google is detected)
+    const google = detectGoogleSignIn({ query, url: entry_url });
+    browserSession = await BrowserSession.launch({
+      headless: !google, // headful for Google sign-in
+      timeoutMs: 30_000,
+      ...(google
+        ? { pipe: true, chromePath: resolveGoogleChromePath() }
+        : process.env.QF_CHROME_PATH && process.env.QF_CHROME_PATH !== "auto"
+          ? { chromePath: process.env.QF_CHROME_PATH }
+          : {}),
+    });
     const cdpHttpUrl = `http://127.0.0.1:${browserSession.browser.port}`;
     logger.info({ cdpHttpUrl }, "queryfirst: record — launched our own Chrome");
 
@@ -914,11 +925,25 @@ async function runDryRunGate(
 ): Promise<{ success: boolean; error?: string; failingStep?: number }> {
   let gatePage: Page | null = null;
   let gateSession: BrowserInstance | null = null;
+  const testWithSteps = store.getTestWithSteps(testId);
+  if (!testWithSteps) return { success: false, error: "test not found" };
+
+  const google = detectGoogleSignIn({
+    query: testWithSteps.query ?? undefined,
+    url: testWithSteps.entryUrl ?? undefined,
+  });
+
   try {
-    gateSession = await BrowserSession.launch({ headless: true, timeoutMs: 20_000 });
+    gateSession = await BrowserSession.launch({
+      headless: !google,
+      timeoutMs: 20_000,
+      ...(google
+        ? { pipe: true, chromePath: resolveGoogleChromePath() }
+        : process.env.QF_CHROME_PATH && process.env.QF_CHROME_PATH !== "auto"
+          ? { chromePath: process.env.QF_CHROME_PATH }
+          : {}),
+    });
     gatePage = await gateSession.newPage();
-    const testWithSteps = store.getTestWithSteps(testId);
-    if (!testWithSteps) return { success: false, error: "test not found" };
     const runner = new ReplayRunner(gatePage);
     const result = await runner.runTest(store, testWithSteps, {
       variables: variables ?? {},
@@ -979,7 +1004,19 @@ router.post("/replay", async (req: Request, res: Response) => {
   let browserSession: BrowserInstance | null = null;
 
   try {
-    browserSession = await BrowserSession.launch({ headless: headful !== true, timeoutMs: 20_000 });
+    const google = detectGoogleSignIn({
+      query: test.query ?? undefined,
+      url: entry_url ?? test.entryUrl ?? undefined,
+    });
+    browserSession = await BrowserSession.launch({
+      headless: headful === true ? false : !google,
+      timeoutMs: 20_000,
+      ...(google
+        ? { pipe: true, chromePath: resolveGoogleChromePath() }
+        : process.env.QF_CHROME_PATH && process.env.QF_CHROME_PATH !== "auto"
+          ? { chromePath: process.env.QF_CHROME_PATH }
+          : {}),
+    });
     const page = await browserSession.newPage();
     active.session = browserSession;
     active.page = page;
@@ -1875,7 +1912,16 @@ router.post("/browse", async (req: Request, res: Response) => {
   let browserSession: BrowserInstance | null = null;
 
   try {
-    browserSession = await BrowserSession.launch({ headless: true, timeoutMs: 30_000 });
+    const google = detectGoogleSignIn({ query, url: entry_url });
+    browserSession = await BrowserSession.launch({
+      headless: !google, // headful for Google sign-in
+      timeoutMs: 30_000,
+      ...(google
+        ? { pipe: true, chromePath: resolveGoogleChromePath() }
+        : process.env.QF_CHROME_PATH && process.env.QF_CHROME_PATH !== "auto"
+          ? { chromePath: process.env.QF_CHROME_PATH }
+          : {}),
+    });
     const page = await browserSession.newPage();
     active.session = browserSession;
     active.page = page;

@@ -2,7 +2,12 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { listVersionDirs, resolveChromePath } from "../config.js";
+import {
+  listVersionDirs,
+  resolveChromePath,
+  resolveGoogleChromePath,
+} from "../config.js";
+import { connect } from "./cdp.js";
 import {
   ChromeLaunchError,
   buildLaunchArgs,
@@ -61,6 +66,18 @@ describe("buildLaunchArgs", () => {
     });
     expect(args).not.toContain("--headless=new");
     expect(args).toContain("--window-size=1280,720");
+  });
+
+  it("uses remote-debugging-pipe instead of a debug port when pipe is set", () => {
+    const args = buildLaunchArgs({
+      headless: true,
+      port: 0,
+      userDataDir: "/tmp/profile",
+      pipe: true,
+    });
+    expect(args).toContain("--remote-debugging-pipe");
+    expect(args).not.toContain("--remote-debugging-port=");
+    expect(args).not.toContain("--remote-debugging-address=");
   });
 
   it("disables automation-controlled features in headful mode only", () => {
@@ -161,6 +178,61 @@ describe("launch integration", () => {
       expect(() => process.kill(browser.pid, 0)).toThrow();
     },
     30_000,
+  );
+
+  it.skipIf(detectedChrome)("skipped: no Chrome/Chromium binary available", () => {
+    expect(detectedChrome).toBe("");
+  });
+});
+
+describe("launch over the DevTools pipe", () => {
+  it.runIf(detectedChrome)(
+    "launches Chrome via the pipe bridge and speaks CDP",
+    async () => {
+      const browser = await launch({ pipe: true, timeoutMs: 20_000 });
+      try {
+        expect(browser.wsUrl).toMatch(
+          /^ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/pipe$/,
+        );
+        expect(browser.port).toBeGreaterThan(0);
+        expect(() => process.kill(browser.pid, 0)).not.toThrow();
+
+        const client = await connect(browser.wsUrl);
+        const version = await client.send<{ protocolVersion: string }>(
+          "Browser.getVersion",
+        );
+        expect(version.protocolVersion).toBeTruthy();
+        client.close();
+      } finally {
+        await browser.close();
+      }
+
+      expect(() => process.kill(browser.pid, 0)).toThrow();
+    },
+    30_000,
+  );
+
+  const cftChrome = resolveGoogleChromePath("auto");
+  it.runIf(
+    process.platform === "darwin" &&
+      cftChrome !== "" &&
+      cftChrome !== detectedChrome,
+  )(
+    "launches a Chrome for Testing build (real Chrome) via the pipe bridge",
+    async () => {
+      const browser = await launch({ pipe: true, chromePath: cftChrome, timeoutMs: 25_000 });
+      try {
+        const client = await connect(browser.wsUrl);
+        const version = await client.send<{ product: string }>(
+          "Browser.getVersion",
+        );
+        expect(version.product).toMatch(/Chrome\/\d+/);
+        client.close();
+      } finally {
+        await browser.close();
+      }
+    },
+    35_000,
   );
 
   it.skipIf(detectedChrome)("skipped: no Chrome/Chromium binary available", () => {

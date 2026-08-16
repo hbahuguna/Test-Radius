@@ -83,6 +83,7 @@ export {
   parseDevToolsUrl,
 } from "./browser/launch.js";
 export type { LaunchedBrowser, LaunchOptions } from "./browser/launch.js";
+export { ChromePipe } from "./browser/pipe.js";
 export {
   detectGoogleSignIn,
   isGoogleSignInUrl,

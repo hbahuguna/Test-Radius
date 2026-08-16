@@ -2,7 +2,7 @@ import { BrowserSession } from "./browser/session.js";
 import { openDatabase } from "./cache/db.js";
 import { DataStore } from "./cache/queries.js";
 import type { TestWithSteps } from "./cache/types.js";
-import { loadConfig, type Config } from "./config.js";
+import { loadConfig, resolveGoogleChromePath, type Config } from "./config.js";
 import { ReplayRunner } from "./replay/engine.js";
 import { OpenAIChatClient } from "./llm/client.js";
 import { LLMStepHealer } from "./replay/heal.js";
@@ -157,6 +157,18 @@ export function usage(): string {
 
 // ----- run command ----------------------------------------------------------
 
+/**
+ * Google blocks sign-in in headless *and* bare-Chromium builds, so a task that
+ * signs in/up with Google must launch a real Chrome window over the DevTools
+ * pipe (works for Chrome for Testing builds that never bind a debug port).
+ */
+function googleLaunchOptions(config: Config): LaunchOptions {
+  return {
+    pipe: true,
+    chromePath: resolveGoogleChromePath(config.chromePath),
+  };
+}
+
 export interface RunCommandArgs {
   target: string;
   variables: Record<string, string>;
@@ -267,7 +279,14 @@ async function runRecordCommand(store: DataStore, parsed: RunCommandArgs): Promi
   // Google blocks sign-in in headless Chrome, so a task that signs in/up with
   // Google forces a visible window regardless of --headful.
   const google = detectGoogleSignIn({ query: parsed.target, url: parsed.entryUrl ?? undefined });
-  const opts = { headless: !(parsed.headful || google), chromePath: config.chromePath === "auto" ? undefined : config.chromePath };
+  const opts: LaunchOptions = {
+    headless: !(parsed.headful || google),
+    ...(google
+      ? googleLaunchOptions(config)
+      : config.chromePath === "auto"
+        ? {}
+        : { chromePath: config.chromePath }),
+  };
   const { ok, report } = await runRecord(store, llm, parsed.target, opts as LaunchOptions, {
     confirm: parsed.confirm,
     auto: parsed.auto,
@@ -382,10 +401,12 @@ export async function runBrowse(
   const emit = onEvent ?? ((e: BrowseEvent) => console.log(formatBrowseEvent(e)));
   const cfg = loadConfig();
   const llm = new OpenAIChatClient(cfg.llm);
+  const google = detectGoogleSignIn({ query: parsed.task });
   let session;
   try {
     session = await BrowserSession.launch({
-      headless: !(parsed.headful || detectGoogleSignIn({ query: parsed.task })),
+      headless: !(parsed.headful || google),
+      ...(google ? googleLaunchOptions(cfg) : {}),
       timeoutMs: 30_000,
     });
     const agent = new LiveAgent({
@@ -480,14 +501,20 @@ async function replayTest(
   queryForRefill?: string,
 ): Promise<number> {
   const { variables, usedLlm: refillLlm } = await buildReplayVariables(store, test, parsed, queryForRefill);
-  const cfg = loadConfig().llm;
+  const config = loadConfig();
+  const cfg = config.llm;
   // A healer is only wired when an LLM endpoint + key are configured; without it
   // a replay that can't locate an element simply fails (llm_calls stays 0).
   const healer = cfg.apiKey ? new LLMStepHealer(new OpenAIChatClient(cfg)) : undefined;
+  const google = detectGoogleSignIn({
+    query: queryForRefill ?? parsed.target,
+    url: test.entryUrl ?? undefined,
+  });
   let session;
   try {
     session = await BrowserSession.launch({
-      headless: !(parsed.headful || detectGoogleSignIn({ query: queryForRefill ?? parsed.target, url: test.entryUrl ?? undefined })),
+      headless: !(parsed.headful || google),
+      ...(google ? googleLaunchOptions(config) : {}),
       timeoutMs: 20_000,
     });
     const page = await session.newPage();

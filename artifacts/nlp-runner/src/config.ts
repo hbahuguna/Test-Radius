@@ -50,13 +50,11 @@ export function listVersionDirs(root: string, prefix = ""): string[] {
     .map((entry) => join(root, entry.name));
 }
 
-function cachedChromeCandidates(home = homedir()): string[] {
-  const candidates: string[] = [];
-
+function msPlaywrightRoots(home: string): string[] {
   // Collect all roots to search for ms-playwright caches.
   // Playwright may install relative to HOME, but on Replit the workspace is
   // /home/runner/workspace while HOME=/home/runner — so we check both.
-  const msPlaywrightRoots = new Set<string>([
+  const roots = new Set<string>([
     join(home, "Library", "Caches", "ms-playwright"),
     join(home, ".cache", "ms-playwright"),
     join(home, "AppData", "Local", "ms-playwright"),
@@ -64,15 +62,20 @@ function cachedChromeCandidates(home = homedir()): string[] {
   // Also check $HOME env var in case os.homedir() differs, and the workspace dir.
   const envHome = process.env["HOME"];
   if (envHome && envHome !== home) {
-    msPlaywrightRoots.add(join(envHome, ".cache", "ms-playwright"));
+    roots.add(join(envHome, ".cache", "ms-playwright"));
   }
   // Replit workspace-relative cache (common when playwright ran from within the workspace).
   const cwd = process.cwd();
-  msPlaywrightRoots.add(join(cwd, ".cache", "ms-playwright"));
+  roots.add(join(cwd, ".cache", "ms-playwright"));
   // Explicit workspace path for Replit Cloud Run.
-  msPlaywrightRoots.add("/home/runner/workspace/.cache/ms-playwright");
+  roots.add("/home/runner/workspace/.cache/ms-playwright");
+  return [...roots];
+}
 
-  for (const root of msPlaywrightRoots) {
+function cachedChromeCandidates(home = homedir()): string[] {
+  const candidates: string[] = [];
+
+  for (const root of msPlaywrightRoots(home)) {
     for (const dir of listVersionDirs(root, "chromium-")) {
       candidates.push(
         // macOS
@@ -131,6 +134,40 @@ export function resolveChromePath(chromePath: string): string {
     if (existsSync(candidate)) return candidate;
   }
   return "";
+}
+
+/**
+ * Resolve a Chrome-*branded* binary (as opposed to a Chromium build). Google
+ * blocks sign-in ("this browser or app may not be secure") when the browser is
+ * a bare Chromium build, so sign-in flows prefer a real Chrome. Priority:
+ * explicit path (QF_CHROME_PATH), QF_GOOGLE_CHROME_PATH, Playwright's
+ * Chrome-for-Testing cache, a system Chrome install, then any Chromium build.
+ */
+export function resolveGoogleChromePath(
+  chromePath = "auto",
+  home = homedir(),
+): string {
+  if (chromePath && chromePath !== "auto") return chromePath;
+  const override = process.env["QF_GOOGLE_CHROME_PATH"];
+  if (override) return override;
+  // Chrome for Testing builds are real Chrome: mac, linux, win.
+  const cftCandidates = [
+    join("chrome-mac-x64", "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing"),
+    join("chrome-linux64", "chrome"),
+    join("chrome-win", "chrome.exe"),
+  ];
+  for (const root of msPlaywrightRoots(home)) {
+    for (const dir of listVersionDirs(root, "chromium-")) {
+      for (const cft of cftCandidates) {
+        const candidate = join(dir, cft);
+        if (existsSync(candidate)) return candidate;
+      }
+    }
+  }
+  for (const candidate of CHROME_CANDIDATES) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return resolveChromePath("auto");
 }
 
 export type ValidationResult =

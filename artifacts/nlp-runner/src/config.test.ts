@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import {
   initConfig,
   loadConfig,
   resolveChromePath,
+  resolveGoogleChromePath,
   validateConfig,
 } from "./config.js";
 
@@ -59,6 +60,58 @@ describe("resolveChromePath", () => {
   it("treats 'auto' and empty as auto-detect (never returns the literal value)", () => {
     expect(resolveChromePath("auto")).not.toBe("auto");
     expect(resolveChromePath("")).not.toBe("");
+  });
+});
+
+describe("resolveGoogleChromePath", () => {
+  it("returns the explicit path unchanged when not 'auto'", () => {
+    expect(resolveGoogleChromePath("/some/chrome")).toBe("/some/chrome");
+  });
+
+  it("honors the QF_GOOGLE_CHROME_PATH env override", () => {
+    const prev = process.env.QF_GOOGLE_CHROME_PATH;
+    process.env.QF_GOOGLE_CHROME_PATH = "/via/env/chrome";
+    try {
+      expect(resolveGoogleChromePath("auto", makeTempDir())).toBe("/via/env/chrome");
+    } finally {
+      if (prev === undefined) {
+        delete process.env.QF_GOOGLE_CHROME_PATH;
+      } else {
+        process.env.QF_GOOGLE_CHROME_PATH = prev;
+      }
+    }
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "prefers a Chrome for Testing build from the Playwright cache",
+    () => {
+      const home = makeTempDir();
+      const exe = join(
+        home,
+        "Library",
+        "Caches",
+        "ms-playwright",
+        "chromium-1217",
+        "chrome-mac-x64",
+        "Google Chrome for Testing.app",
+        "Contents",
+        "MacOS",
+      );
+      mkdirSync(exe, { recursive: true });
+      writeFileSync(
+        join(exe, "Google Chrome for Testing"),
+        "fake-cft",
+      );
+      expect(resolveGoogleChromePath("auto", home)).toBe(
+        join(exe, "Google Chrome for Testing"),
+      );
+    },
+  );
+
+  it("falls back to a real Chrome install or any Chromium build", () => {
+    const resolved = resolveGoogleChromePath("auto", makeTempDir());
+    expect(resolved).not.toBe("");
+    expect(resolved).not.toBe("auto");
   });
 });
 
