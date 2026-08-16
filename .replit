@@ -144,6 +144,8 @@ externalPort = 3001
 [userenv.shared]
 VITE_SUPABASE_URL = "https://ntcaohfrebjwdtdmzrml.supabase.co"
 VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im50Y2FvaGZyZWJqd2R0ZG16cm1sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzMDAyMDMsImV4cCI6MjA5OTg3NjIwM30.dm7K7VheMvR0EOJxWwFKPPA_5QlEZ_UBz1EfSekmvDc"
+VITE_POSTHOG_KEY = "phc_y48wNqNVvryi3iRPVqscHBU4f3hjPo8eSQps4s7gzwvY"
+VITE_POSTHOG_HOST = "https://us.i.posthog.com"
 SUPABASE_URL = "https://ntcaohfrebjwdtdmzrml.supabase.co"
 ENCRYPTION_KEY = "22bd0ccc0efed785ff33dc661a6597b24b4522e033f42aeb6ee09430cbdb342e"
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "/nix/store/qa9cnw4v5xkxyip6mb9kxqfq1z4x2dx1-chromium-138.0.7204.100/bin/chromium"
