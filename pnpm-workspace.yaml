@@ -8,6 +8,7 @@ allowBuilds:
   '@google/genai': true
   better-sqlite3: true
   bufferutil: true
+  core-js: false
   esbuild: true
   onnxruntime-node: true
   protobufjs: true

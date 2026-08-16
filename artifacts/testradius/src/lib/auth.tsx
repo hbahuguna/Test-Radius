@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient, type Session, type User } from "@sup
 import { useLocation, useRoute } from "wouter";
 import { SUPABASE_URL, SUPABASE_ANON_KEY, isSupabaseConfigured } from "./supabase-config";
 import { setAuthTokenGetter } from "@workspace/api-client-react";
+import posthog from "./posthog";
 
 interface AuthContextValue {
   session: Session | null;
@@ -14,6 +15,15 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+function identifyUser(user: User) {
+  const name = user.user_metadata.full_name ?? user.user_metadata.name;
+
+  posthog.identify(user.id, {
+    email: user.email,
+    ...(typeof name === "string" ? { name } : {}),
+  });
+}
 
 // Lazily create the Supabase client only when configured.
 const supabase: SupabaseClient | null = isSupabaseConfigured
@@ -55,6 +65,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log("[auth] getSession ->", data.session ? "session found" : "no session");
       setSession(data.session);
       setUser(data.session?.user ?? null);
+      if (data.session?.user) {
+        identifyUser(data.session.user);
+      }
       setLoading(false);
     });
 
@@ -89,7 +102,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             console.log("[auth] me response:", res.status);
             if (res.status === 403) throw new Error("signup_required");
           }
-          // Successful auth → go to QueryFirst (primary engine).
+          // Successful auth → identify the authenticated user before continuing.
+          identifyUser(newSession.user);
           console.log("[auth] navigating to /queryfirst");
           navigate("/queryfirst");
         } catch (err) {
@@ -97,6 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Backend rejected (e.g. login without prior signup). Sign out and
           // force the user back to the login screen.
           await supabase.auth.signOut();
+          posthog.reset();
           setSession(null);
           setUser(null);
           sessionStorage.setItem("auth_error", "signup_required");
@@ -140,6 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     if (!supabase) return;
     await supabase.auth.signOut();
+    posthog.reset();
     setSession(null);
     setUser(null);
   };

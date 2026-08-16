@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
+import posthog from "@/lib/posthog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -125,6 +126,11 @@ export function Tester() {
     setGeneratedCode(null);
     setScreenshot(null);
     setRunError(null);
+    posthog.capture("agentic_test_run_started", {
+      assertion_count: assertions.filter((assertion) => assertion.target || assertion.expected || assertion.pattern).length,
+      mode,
+      model_provider: model,
+    });
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -191,11 +197,21 @@ export function Tester() {
             } else if (e.event === "screenshot") {
               if (e.screenshot) setScreenshot(e.screenshot);
             } else if (e.event === "done") {
+              posthog.capture("agentic_test_run_completed", {
+                mode,
+                model_provider: model,
+                success: Boolean(e.success),
+              });
               setStatus(e.success ? "done" : "failed");
               setSuccess(Boolean(e.success));
               if (typeof e.generated_code === "string") setGeneratedCode(e.generated_code);
               if (!e.success && typeof e.error === "string") setRunError(e.error);
             } else if (e.event === "error") {
+              posthog.capture("agentic_test_run_completed", {
+                mode,
+                model_provider: model,
+                success: false,
+              });
               setStatus("failed");
               if (typeof e.message === "string") setRunError(e.message);
             }
@@ -206,6 +222,11 @@ export function Tester() {
       if (err?.name === "AbortError") {
         setStatus("stopped");
       } else {
+        posthog.capture("agentic_test_run_completed", {
+          mode,
+          model_provider: model,
+          success: false,
+        });
         setStatus("failed");
         if (err?.code === "insufficient_credits") {
           toast.error("No credits remaining. Redirecting to Settings…");

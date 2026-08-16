@@ -52,7 +52,7 @@ function buildGoalWithVariables(query: string, variables?: Record<string, string
     .join("\n");
   return `${query}\n\nIMPORTANT — When filling in any form fields, always use EXACTLY these values (do not invent alternatives):\n${lines}`;
 }
-import { ShadowRecorder, type BrowserUseStepEvent } from "../lib/browser-use-recorder.js";
+import { ShadowRecorder, stableUrlFragment, type BrowserUseStepEvent } from "../lib/browser-use-recorder.js";
 import type { BrowserAgentEvent, BrowserAgentStepEvent, BrowserAgentDoneEvent, BrowserAgentErrorEvent } from "../lib/browser-use-client.js";
 
 const router: IRouter = Router();
@@ -235,6 +235,7 @@ router.get("/tests", async (_req: Request, res: Response) => {
           selector: s.selector,
           value: s.value,
           optional: s.optional ?? false,
+          assertion: s.assertion ?? null,
           intent: stepToEnglish(s),
         })),
         slots: slots.map((s: { name: string; kind: string; defaultValue: string | null }) => ({
@@ -327,12 +328,155 @@ router.delete("/tests/:testId/steps/:stepId", async (req: Request, res: Response
         selector: s.selector,
         value: s.value,
         optional: s.optional ?? false,
+        assertion: s.assertion ?? null,
         intent: stepToEnglish(s),
       })),
     });
   } catch (err) {
     logger.error({ err }, "queryfirst: delete step failed");
     res.status(500).json({ error: "internal_error", message: "Failed to delete step" });
+  }
+});
+
+// PATCH /queryfirst/tests/:testId/steps/:stepId — edit one recorded step
+// (e.g. update/clear an assertion, fix a selector or value).
+router.patch("/tests/:testId/steps/:stepId", async (req: Request, res: Response) => {
+  try {
+    const testId = Number(req.params.testId);
+    const stepId = Number(req.params.stepId);
+    if (!Number.isInteger(testId) || !Number.isInteger(stepId)) {
+      res.status(400).json({ error: "invalid_params", message: "testId and stepId must be integers" });
+      return;
+    }
+    const store = getStore();
+    const step = store.getStep(stepId);
+    if (!step || step.testId !== testId) {
+      res.status(404).json({ error: "step_not_found", message: "Step not found on this test" });
+      return;
+    }
+    const { action, selector, value, assertion } = req.body ?? {};
+    const patch: Parameters<typeof store.updateStep>[1] = {};
+    if (action !== undefined) {
+      if (typeof action !== "string") {
+        res.status(400).json({ error: "invalid_action" });
+        return;
+      }
+      patch.action = action as NewStep["action"];
+    }
+    if (selector !== undefined) {
+      patch.selector = selector === null || selector === "" ? null : String(selector);
+    }
+    if (value !== undefined) {
+      patch.value = value === null ? null : String(value);
+    }
+    if (assertion !== undefined) {
+      if (assertion === null) {
+        patch.assertion = null;
+      } else if (typeof assertion === "object" && typeof assertion.op === "string") {
+        const op = assertion.op as string;
+        if (!["url", "text", "visible"].includes(op)) {
+          res.status(400).json({ error: "invalid_assertion_op", message: "op must be url, text, or visible" });
+          return;
+        }
+        patch.assertion = {
+          op,
+          expected: "expected" in assertion ? assertion.expected : undefined,
+        };
+      } else {
+        res.status(400).json({ error: "invalid_assertion", message: "assertion must be {op, expected} or null" });
+        return;
+      }
+    }
+    if (Object.keys(patch).length === 0) {
+      res.status(400).json({ error: "empty_patch", message: "Nothing to update" });
+      return;
+    }
+    const updated = store.updateStep(stepId, patch);
+    res.json({
+      ok: true,
+      step: {
+        id: updated.id,
+        idx: updated.idx,
+        action: updated.action,
+        selector: updated.selector,
+        value: updated.value,
+        optional: updated.optional ?? false,
+        assertion: updated.assertion ?? null,
+        intent: stepToEnglish(updated),
+      },
+    });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: patch step failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to update step" });
+  }
+});
+
+// POST /queryfirst/tests/:testId/steps — insert a new step at a position
+// (defaults to appending at the end). Used to add an assertion after recording.
+router.post("/tests/:testId/steps", async (req: Request, res: Response) => {
+  try {
+    const testId = Number(req.params.testId);
+    if (!Number.isInteger(testId)) {
+      res.status(400).json({ error: "invalid_test_id" });
+      return;
+    }
+    const store = getStore();
+    const test = store.getTest(testId);
+    if (!test) {
+      res.status(404).json({ error: "test_not_found", message: "Test not found" });
+      return;
+    }
+    const { idx, action, selector, value, assertion } = req.body ?? {};
+    const stepAction = typeof action === "string" ? (action as string) : "assert";
+    if (!["navigate", "click", "fill", "select", "scroll", "assert", "extract", "wait", "go_back"].includes(stepAction)) {
+      res.status(400).json({ error: "invalid_action", message: `Unsupported action "${stepAction}"` });
+      return;
+    }
+    if (stepAction === "assert") {
+      if (!assertion || typeof assertion !== "object" || typeof assertion.op !== "string") {
+        res.status(400).json({ error: "invalid_assertion", message: "assert steps require an assertion {op, expected}" });
+        return;
+      }
+      if (!["url", "text", "visible"].includes(assertion.op)) {
+        res.status(400).json({ error: "invalid_assertion_op", message: "op must be url, text, or visible" });
+        return;
+      }
+    }
+    const existing = store.listStepsByTest(testId);
+    const rawIdx = typeof idx === "number" && Number.isFinite(idx) ? (idx as number) : existing.length;
+    const position = Math.min(Math.max(0, rawIdx), existing.length);
+    const newStep: NewStep = {
+      action: stepAction as NewStep["action"],
+      selector: selector === undefined ? null : selector === "" ? null : String(selector),
+      value: value === undefined ? null : value === "" ? null : String(value),
+      locators: [],
+      elementFingerprint: null,
+      pageSignatureBefore: null,
+      pageSignatureAfter: null,
+      waitCondition: null,
+      assertion:
+        stepAction === "assert" && assertion
+          ? { op: assertion.op, expected: "expected" in assertion ? assertion.expected : undefined }
+          : null,
+      optional: false,
+    };
+    const inserted = store.insertStepAt(testId, position, newStep);
+    res.json({
+      ok: true,
+      step: {
+        id: inserted.id,
+        idx: inserted.idx,
+        action: inserted.action,
+        selector: inserted.selector,
+        value: inserted.value,
+        optional: inserted.optional ?? false,
+        assertion: inserted.assertion ?? null,
+        intent: stepToEnglish(inserted),
+      },
+    });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: insert step failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to insert step" });
   }
 });
 
@@ -660,6 +804,24 @@ function buildStepsWithNavigation(
       waitCondition: null,
       assertion: null,
     });
+
+    // Deterministic auto-assert: guarantee an entry assertion even when the
+    // agent starts on the URL directly and never issues a navigate action.
+    const entryFragment = stableUrlFragment(entryUrl);
+    if (entryFragment) {
+      steps.push({
+        action: "assert",
+        value: null,
+        selector: null,
+        locators: [],
+        elementFingerprint: null,
+        pageSignatureBefore: null,
+        pageSignatureAfter: null,
+        waitCondition: null,
+        assertion: { op: "url", expected: entryFragment },
+        optional: false,
+      });
+    }
   }
 
   steps.push(

@@ -30,7 +30,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
-from browser_use import Agent, Browser, BrowserProfile
+from browser_use import Agent, Browser, BrowserProfile, ActionResult, BrowserSession, Tools
 from browser_use.agent.views import AgentHistory, AgentOutput, AgentHistoryList
 
 
@@ -440,6 +440,101 @@ def format_action_trace(model_output: Any, browser_state: Any, redact_values: bo
     return trace
 
 
+async def _eval_page_js(browser_session: BrowserSession, js: str) -> Any:
+    """Evaluate JS in the current page via the CDP session and return the value."""
+    cdp_session = await browser_session.get_or_create_cdp_session()
+    result = await cdp_session.cdp_client.send.Runtime.evaluate(
+        params={"expression": js, "returnByValue": True, "awaitPromise": True},
+        session_id=cdp_session.session_id,
+    )
+    if result.get("exceptionDetails"):
+        raise RuntimeError(result["exceptionDetails"].get("text", "Unknown JS error"))
+    return result.get("result", {}).get("value")
+
+
+def _build_assertion_tools() -> Tools:
+    """Create a Tools registry with the default browser-use actions plus three
+    assertion tools (assert_url / assert_visible / assert_text) so the LLM can
+    verify crucial steps live during recording. Each tool returns an
+    ActionResult whose error field carries a machine-readable description the
+    agent can react to, and whose structured params flow into the action trace
+    so the ShadowRecorder can serialize the assertion into the recorded test.
+    """
+    tools = Tools()
+
+    @tools.registry.action(
+        "Assert that the current page URL contains the given substring. "
+        "Use after navigation, form submission, or any action expected to change "
+        "the page, to verify the page transitioned to the expected location."
+    )
+    async def assert_url(contains: str, browser_session: BrowserSession) -> ActionResult:
+        url = await browser_session.get_current_page_url()
+        if contains not in url:
+            return ActionResult(error=f'assertion_error: URL "{url}" does not contain "{contains}"')
+        return ActionResult(
+            extracted_content=f'assertion_url: URL contains "{contains}"',
+            long_term_memory=f'Verified URL contains "{contains}"',
+        )
+
+    @tools.registry.action(
+        "Assert that the element with the given index is visible on the current page. "
+        "Use after a click, navigation, or reveal to verify the expected element actually "
+        "rendered and is not hidden."
+    )
+    async def assert_visible(index: int, browser_session: BrowserSession) -> ActionResult:
+        node = await browser_session.get_element_by_index(index)
+        if node is None:
+            return ActionResult(error=f'assertion_error: element index {index} not available - page may have changed. Refresh browser state.')
+        try:
+            data = await _eval_page_js(
+                browser_session,
+                f"(function(){{ const el = document.evaluate({json.dumps(node.xpath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue; "
+                f"if (!el) return {{found: false}}; "
+                f"const r = el.getBoundingClientRect(); const s = getComputedStyle(el); "
+                f"return {{found: true, visible: r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0'}}; }})()",
+            )
+        except Exception as e:
+            return ActionResult(error=f'assertion_error: failed to check visibility: {type(e).__name__}: {e}')
+        if not data or not data.get("found"):
+            return ActionResult(error=f'assertion_error: element index {index} not found in live DOM.')
+        if not data.get("visible"):
+            return ActionResult(error=f'assertion_error: element index {index} exists but is not visible.')
+        return ActionResult(
+            extracted_content=f"assertion_visible: element {index} is visible",
+            long_term_memory=f"Verified element {index} is visible",
+        )
+
+    @tools.registry.action(
+        "Assert that the element with the given index contains the given text. "
+        "Use after a state change (submit, error, confirmation) to verify the element "
+        "displays the expected message or value."
+    )
+    async def assert_text(index: int, text: str, browser_session: BrowserSession) -> ActionResult:
+        node = await browser_session.get_element_by_index(index)
+        if node is None:
+            return ActionResult(error=f'assertion_error: element index {index} not available - page may have changed. Refresh browser state.')
+        try:
+            data = await _eval_page_js(
+                browser_session,
+                f"(function(){{ const el = document.evaluate({json.dumps(node.xpath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue; "
+                f"if (!el) return {{found: false}}; "
+                f"return {{found: true, text: (el.innerText || el.textContent || '').trim()}}; }})()",
+            )
+        except Exception as e:
+            return ActionResult(error=f'assertion_error: failed to read element text: {type(e).__name__}: {e}')
+        if not data or not data.get("found"):
+            return ActionResult(error=f'assertion_error: element index {index} not found in live DOM.')
+        actual = data.get("text") or ""
+        if text not in actual:
+            return ActionResult(error=f'assertion_error: element {index} text "{actual}" does not contain "{text}".')
+        return ActionResult(
+            extracted_content=f'assertion_text: element {index} contains "{text}"',
+            long_term_memory=f'Verified element {index} contains "{text}"',
+        )
+
+    return tools
+
+
 def extract_root_cause(error: Exception) -> str:
     """Extract a machine-readable root cause string from an exception."""
     if error is None:
@@ -707,6 +802,25 @@ async def run_agent_task(run_id: str, request: RunRequest):
             'the page, then call done to report it.'
         )
 
+        assertion_guide = (
+            '\n\nASSERTION RULES (for test recording):\n'
+            '- After ANY step that changes the page state (navigation, form '
+            'submission, tab switch, long wait, or a click you believe triggers a '
+            'state change), verify the outcome with an assertion tool.\n'
+            '- Use assert_url(contains="...") to confirm the page navigated to the '
+            'expected location after a submit/link click.\n'
+            '- Use assert_visible(index=N) to confirm a key element rendered after '
+            'a navigation or reveal action.\n'
+            '- Use assert_text(index=N, text="...") to confirm an element shows '
+            'the expected message or value (e.g. a confirmation, error, or result).\n'
+            '- Assertions must be MEANINGFUL: only assert things that distinguish '
+            'success from failure of the flow. Do not assert intermediate states '
+            'that vary between runs.\n'
+            '- When an assertion fails, inspect the page and recover (wait, retry, '
+            'or correct), then continue. Do not record a test that fails its own '
+            'assertions.'
+        )
+
         agent = EarlyScreenshotAgent(
             task=task_text,
             llm=llm,
@@ -716,7 +830,8 @@ async def run_agent_task(run_id: str, request: RunRequest):
             use_thinking=not is_poolside,
             flash_mode=is_poolside,
             llm_timeout=180,
-            extend_system_message=completion_guide,
+            tools=_build_assertion_tools(),
+            extend_system_message=completion_guide + assertion_guide,
             register_new_step_callback=step_callback,
             register_done_callback=done_callback,
             on_initial_screenshot=on_initial_screenshot,

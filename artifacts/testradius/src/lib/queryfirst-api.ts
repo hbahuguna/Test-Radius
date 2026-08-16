@@ -8,6 +8,12 @@ async function getAuthToken(): Promise<string> {
 
 // ----- types -----------------------------------------------------------------
 
+export interface QfAssertion {
+  op: "url" | "text" | "visible";
+  expected?: unknown;
+  actual?: unknown;
+}
+
 export interface QfTestStep {
   id: number;
   idx: number;
@@ -18,6 +24,8 @@ export interface QfTestStep {
   intent: string;
   /** True for cookie/consent steps that are automatically skipped on replay when absent */
   optional: boolean;
+  /** Assertion attached to this step (assert steps only) */
+  assertion: QfAssertion | null;
 }
 
 export interface QfSlot {
@@ -252,6 +260,38 @@ export async function deleteStep(
   return authedFetch<{ ok: boolean; steps: QfTestStep[] }>(
     `/tests/${testId}/steps/${stepId}`,
     { method: "DELETE" },
+  );
+}
+
+export async function patchStep(
+  testId: number,
+  stepId: number,
+  body: {
+    action?: string;
+    selector?: string | null;
+    value?: string | null;
+    assertion?: QfAssertion | null;
+  },
+): Promise<{ ok: boolean; step: QfTestStep }> {
+  return authedFetch<{ ok: boolean; step: QfTestStep }>(
+    `/tests/${testId}/steps/${stepId}`,
+    { method: "PATCH", body: JSON.stringify(body) },
+  );
+}
+
+export async function insertStep(
+  testId: number,
+  body: {
+    idx?: number;
+    action?: string;
+    selector?: string | null;
+    value?: string | null;
+    assertion?: QfAssertion | null;
+  },
+): Promise<{ ok: boolean; step: QfTestStep }> {
+  return authedFetch<{ ok: boolean; step: QfTestStep }>(
+    `/tests/${testId}/steps`,
+    { method: "POST", body: JSON.stringify(body) },
   );
 }
 

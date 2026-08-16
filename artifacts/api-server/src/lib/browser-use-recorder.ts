@@ -24,6 +24,7 @@ import {
   type DomEntry,
   type RecordedStep,
   type RecordedSlot,
+  type Assertion,
   detectSlot,
   detectSlotKind,
   type StepAction,
@@ -101,6 +102,7 @@ function isConsentElement(element: BrowserUseElement | null, axName: string | nu
  */
 function mapAction(actionName: string): StepAction | null {
   const lower = actionName.toLowerCase();
+  if (lower.includes("assert")) return "assert";
   if (lower.includes("click")) return "click";
   if (lower.includes("input") || lower.includes("sendkeys") || lower.includes("keys") || lower.includes("type")) return "fill";
   if (lower.includes("navigate")) return "navigate";
@@ -108,6 +110,46 @@ function mapAction(actionName: string): StepAction | null {
   if (lower.includes("scroll")) return "scroll";
   if (lower.includes("wait")) return "wait";
   if (lower.includes("go_back") || lower.includes("goback")) return "go_back";
+  return null;
+}
+
+/**
+ * Extract the assertion carried by a browser-use assert_* action trace entry.
+ * The LLM-generated tools emit structured params, e.g.
+ * {"assert_url": {"contains": "..."}}, {"assert_visible": {"index": N}},
+ * {"assert_text": {"index": N, "text": "..."}}. We serialize these into our
+ * engine's Assertion shape ({op, expected}) — replay uses step.selector for
+ * text/visible assertions and step.value/expected for url.
+ */
+function extractAssertion(entry: BrowserUseActionTraceEntry): Assertion | null {
+  const action = entry.action.toLowerCase();
+  if (!action.includes("assert")) return null;
+
+  const raw = entry.raw;
+  if (typeof raw !== "object" || raw === null) return null;
+  const rawObj = raw as Record<string, unknown>;
+
+  const firstKey = Object.keys(rawObj)[0] as string | undefined;
+  const params =
+    firstKey && typeof rawObj[firstKey] === "object" && rawObj[firstKey] !== null
+      ? (rawObj[firstKey] as Record<string, unknown>)
+      : rawObj;
+
+  if (action === "assert_url") {
+    const expected = params["contains"];
+    return typeof expected === "string" && expected
+      ? { op: "url", expected }
+      : { op: "url", expected: String(expected ?? "") };
+  }
+  if (action === "assert_visible") {
+    return { op: "visible", expected: true };
+  }
+  if (action === "assert_text") {
+    const expected = params["text"];
+    return typeof expected === "string" && expected
+      ? { op: "text", expected }
+      : { op: "text", expected: String(expected ?? "") };
+  }
   return null;
 }
 
@@ -277,6 +319,27 @@ function deriveWaitCondition(
 }
 
 /**
+ * Derive a stable "host + path" fragment from a URL, used for deterministic
+ * assert_url assertions. Ignores query strings, hashes, and trailing slashes so
+ * the assertion stays meaningful (wrong domain/path fails) yet replay-stable
+ * (session params don't spuriously fail it). Falls back to the raw host when
+ * URL parsing fails.
+ */
+export function stableUrlFragment(rawUrl: string): string | null {
+  if (!rawUrl) return null;
+  let u: URL;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    const host = rawUrl.split(/[/?#]/)[0];
+    return host || null;
+  }
+  if (!u.host) return null;
+  const path = u.pathname.replace(/\/+$/, "");
+  return path && path !== "/" ? `${u.host}${path}` : u.host;
+}
+
+/**
  * Collect visible refs from the current page (same as recorder's collectVisibleRefs).
  */
 async function collectVisibleRefs(page: Page): Promise<string[]> {
@@ -396,6 +459,7 @@ export class ShadowRecorder {
       collectVisibleRefs(this.page).catch(() => this.lastRefs ?? []),
     ]);
 
+    let sawNavigate = false;
     for (const entry of actionTrace) {
       const step = await this.buildRecordedStep(
         entry,
@@ -403,7 +467,41 @@ export class ShadowRecorder {
         sigAfter,
         refsAfter,
       );
-      if (step) this.steps.push(step);
+      if (!step) continue;
+      this.steps.push(step);
+      if (step.action === "navigate") sawNavigate = true;
+    }
+
+    // Deterministic auto-assert: guarantee meaningful assertions on every
+    // recording regardless of LLM tool use. Assert the stable host+path after
+    // explicit navigations and after any action that changed the page's URL
+    // fragment (e.g. a form submission or link click that navigated).
+    const urlChanged = this.lastUrl !== null && urlAfter !== this.lastUrl;
+    const stableAfter = stableUrlFragment(urlAfter);
+    const stableBefore = this.lastUrl ? stableUrlFragment(this.lastUrl) : null;
+    const fragmentChanged =
+      stableAfter !== null && stableBefore !== null && stableAfter !== stableBefore;
+
+    if (stableAfter && (sawNavigate || (urlChanged && fragmentChanged))) {
+      const last = this.steps[this.steps.length - 1];
+      const dup =
+        last?.action === "assert" &&
+        last.assertion?.op === "url" &&
+        String(last.assertion?.expected) === stableAfter;
+      if (!dup) {
+        this.steps.push({
+          action: "assert",
+          selector: null,
+          value: null,
+          locators: [],
+          elementFingerprint: null,
+          pageSignatureBefore: null,
+          pageSignatureAfter: null,
+          waitCondition: null,
+          assertion: { op: "url", expected: stableAfter },
+          optional: false,
+        });
+      }
     }
   }
 
@@ -477,7 +575,7 @@ export class ShadowRecorder {
       pageSignatureBefore: this.lastSignature,
       pageSignatureAfter: sigAfter,
       waitCondition,
-      assertion: null,
+      assertion: extractAssertion(entry),
       optional,
     };
   }

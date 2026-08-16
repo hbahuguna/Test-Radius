@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
+import posthog from "@/lib/posthog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "wouter";
@@ -86,6 +87,10 @@ export function BrowserAuto() {
     setSteps([]);
     setScreenshot(null);
     setRunError(null);
+    posthog.capture("browser_auto_run_started", {
+      assertion_count: assertions.filter((assertion) => assertion.target || assertion.expected || assertion.pattern).length,
+      model_provider: model,
+    });
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -155,10 +160,18 @@ export function BrowserAuto() {
             } else if (e.event === "screenshot") {
               if (e.screenshot) setScreenshot(e.screenshot);
             } else if (e.event === "done") {
+              posthog.capture("browser_auto_run_completed", {
+                model_provider: model,
+                success: Boolean(e.success),
+              });
               setStatus(e.success ? "done" : "failed");
               setSuccess(Boolean(e.success));
               if (!e.success && typeof e.message === "string") setRunError(e.message);
             } else if (e.event === "error") {
+              posthog.capture("browser_auto_run_completed", {
+                model_provider: model,
+                success: false,
+              });
               setStatus("failed");
               if (typeof e.message === "string") setRunError(e.message);
             }
@@ -169,6 +182,10 @@ export function BrowserAuto() {
       if (err?.name === "AbortError") {
         setStatus("stopped");
       } else {
+        posthog.capture("browser_auto_run_completed", {
+          model_provider: model,
+          success: false,
+        });
         setStatus("failed");
         if (err?.code === "no_api_key") {
           toast.error(err?.message || "No API key configured. Redirecting to Settings...");

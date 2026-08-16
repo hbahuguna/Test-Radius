@@ -355,6 +355,26 @@ export class DataStore {
     return this.getStep(Number(result.lastInsertRowid))!;
   }
 
+  /**
+   * Insert a step at the given idx, shifting subsequent steps down so idx stays
+   * contiguous (0, 1, 2, …). Appends when idx is beyond the current last index.
+   * Safe to call inside a transaction or standalone.
+   */
+  insertStepAt(testId: number, idx: number, input: NewStep): Step {
+    const clampedIdx = Math.max(0, idx);
+    let inserted!: Step;
+    this.db.transaction(() => {
+      this.db
+        .prepare(`UPDATE steps SET idx = -(idx + 1) WHERE test_id = ? AND idx >= ?`)
+        .run(testId, clampedIdx);
+      this.db
+        .prepare(`UPDATE steps SET idx = -idx WHERE test_id = ? AND idx < 0`)
+        .run(testId);
+      inserted = this.insertStep(testId, clampedIdx, input);
+    })();
+    return inserted;
+  }
+
   getStep(id: number): Step | null {
     const row = this.db
       .prepare(`SELECT * FROM steps WHERE id = ?`)

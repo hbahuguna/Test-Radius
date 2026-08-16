@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useAuth } from "@/lib/auth";
+import posthog from "@/lib/posthog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,10 +17,14 @@ import {
   listRuns,
   deleteTest,
   deleteStep,
+  patchStep,
+  insertStep,
   getScreenshot,
   type QfTest,
   type QfRun,
   type QfEvent,
+  type QfTestStep,
+  type QfAssertion,
 } from "@/lib/queryfirst-api";
 import { SuitesPanel } from "@/components/queryfirst/SuitesPanel";
 import { TrainsPanel } from "@/components/queryfirst/TrainsPanel";
@@ -39,6 +44,10 @@ import {
   ChevronDown,
   ChevronRight,
   Wrench,
+  ShieldCheck,
+  Plus,
+  Check,
+  X,
 } from "lucide-react";
 
 type Mode = "idle" | "recording" | "replaying" | "browsing";
@@ -84,6 +93,7 @@ export function QueryFirst() {
   const [redesign, setRedesign] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
+  const activeModeRef = useRef<Exclude<Mode, "idle"> | null>(null);
   const screenshotTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load API keys + tests on mount
@@ -230,7 +240,19 @@ export function QueryFirst() {
           });
         }
         break;
-      case "done":
+      case "done": {
+        const activeMode = activeModeRef.current;
+        if (activeMode) {
+          const completedEvent = {
+            recording: "queryfirst_record_completed",
+            replaying: "queryfirst_replay_completed",
+            browsing: "queryfirst_browse_completed",
+          }[activeMode];
+          posthog.capture(completedEvent, {
+            self_healed: event.selfHealed ?? 0,
+            success: event.ok,
+          });
+        }
         setRunResult({ ok: event.ok, llmCalls: event.llmCalls, selfHealed: event.selfHealed, error: event.error, testId: event.testId });
         setStatus(event.ok ? "done" : "error");
         setMode("idle");
@@ -244,17 +266,31 @@ export function QueryFirst() {
         if (!event.testId && !event.selfHealed && event.ok) {
           toast.success("Browse task completed!");
         }
+        activeModeRef.current = null;
         break;
-      case "error":
+      }
+      case "error": {
+        const activeMode = activeModeRef.current;
+        if (activeMode) {
+          const completedEvent = {
+            recording: "queryfirst_record_completed",
+            replaying: "queryfirst_replay_completed",
+            browsing: "queryfirst_browse_completed",
+          }[activeMode];
+          posthog.capture(completedEvent, { success: false });
+        }
         addStep({ label: "Fatal error", status: "failed", detail: event.message, timestamp: Date.now() });
         setStatus("error");
         setMode("idle");
+        activeModeRef.current = null;
         break;
+      }
     }
   }, [addStep, refreshTests]);
 
   const handleStartRecord = async () => {
     if (!query.trim()) return;
+    activeModeRef.current = "recording";
     setMode("recording");
     setStatus("running");
     setSteps([]);
@@ -262,6 +298,9 @@ export function QueryFirst() {
     setCurrentMilestone(null);
     setRunResult(null);
     setScreenshot(null);
+    posthog.capture("queryfirst_record_started", {
+      model_provider: provider,
+    });
 
     let vars: Record<string, string> = {};
     try { vars = JSON.parse(variables); } catch { /* ignore malformed */ }
@@ -273,6 +312,8 @@ export function QueryFirst() {
         { onEvent: handleEvent, signal: abortRef.current.signal },
       );
     } catch (err) {
+      posthog.capture("queryfirst_record_completed", { success: false });
+      activeModeRef.current = null;
       toast.error(err instanceof Error ? err.message : "Recording failed");
       setStatus("error");
       setMode("idle");
@@ -282,11 +323,16 @@ export function QueryFirst() {
   const handleStartReplay = async () => {
     if (selectedTest === null) return;
 
+    activeModeRef.current = "replaying";
     setMode("replaying");
     setStatus("running");
     setSteps([]);
     setRunResult(null);
     setScreenshot(null);
+    posthog.capture("queryfirst_replay_started", {
+      healing_enabled: redesign,
+      model_provider: provider,
+    });
 
     let vars: Record<string, string> = {};
     try { vars = JSON.parse(variables); } catch { /* ignore */ }
@@ -306,6 +352,8 @@ export function QueryFirst() {
       // Refresh runs after replay
       listRuns(selectedTest).then((r) => setRuns(r.runs)).catch(() => {});
     } catch (err) {
+      posthog.capture("queryfirst_replay_completed", { success: false });
+      activeModeRef.current = null;
       toast.error(err instanceof Error ? err.message : "Replay failed");
       setStatus("error");
       setMode("idle");
@@ -315,12 +363,14 @@ export function QueryFirst() {
   const handleStop = async () => {
     abortRef.current?.abort();
     try { await stopRun(); } catch { /* */ }
+    activeModeRef.current = null;
     setMode("idle");
     setStatus("idle");
   };
 
   const handleStartBrowse = async () => {
     if (!query.trim()) return;
+    activeModeRef.current = "browsing";
     setMode("browsing");
     setStatus("running");
     setSteps([]);
@@ -328,6 +378,9 @@ export function QueryFirst() {
     setCurrentMilestone(null);
     setRunResult(null);
     setScreenshot(null);
+    posthog.capture("queryfirst_browse_started", {
+      model_provider: provider,
+    });
 
     abortRef.current = new AbortController();
     try {
@@ -336,6 +389,8 @@ export function QueryFirst() {
         { onEvent: handleEvent, signal: abortRef.current.signal },
       );
     } catch (err) {
+      posthog.capture("queryfirst_browse_completed", { success: false });
+      activeModeRef.current = null;
       toast.error(err instanceof Error ? err.message : "Browse failed");
       setStatus("error");
       setMode("idle");
@@ -366,6 +421,105 @@ const handleDeleteStep = async (testId: number, stepId: number) => {
       toast.success("Step removed");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to remove step");
+    }
+  };
+
+  interface AssertionDraft {
+    testId: number;
+    afterIdx: number;
+    editing: { id: number; idx: number } | null;
+    op: "url" | "text" | "visible";
+    selector: string;
+    expected: string;
+  }
+
+  const [assertionDraft, setAssertionDraft] = useState<AssertionDraft | null>(null);
+
+  const applyStep = (testId: number, fn: (t: QfTest) => QfTest) => {
+    setTests((prev) => prev.map((t) => (t.id === testId ? fn(t) : t)));
+  };
+
+  const handleEditAssertion = (step: QfTestStep, testId: number) => {
+    setAssertionDraft({
+      testId,
+      afterIdx: step.idx,
+      editing: { id: step.id, idx: step.idx },
+      op: step.assertion?.op ?? "visible",
+      selector: step.selector ?? "",
+      expected:
+        step.assertion?.op === "url" && typeof step.assertion.expected === "string"
+          ? step.assertion.expected
+          : step.assertion?.op === "text" && typeof step.assertion.expected === "string"
+            ? step.assertion.expected
+            : "",
+    });
+  };
+
+  const handleAddAssertion = (testId: number, afterIdx: number) => {
+    setAssertionDraft({
+      testId,
+      afterIdx,
+      editing: null,
+      op: "visible",
+      selector: "",
+      expected: "",
+    });
+  };
+
+  const handleSaveAssertion = async () => {
+    if (!assertionDraft) return;
+    const { testId, afterIdx, editing, op, selector, expected } = assertionDraft;
+    const assertion: QfAssertion =
+      op === "url"
+        ? { op, expected }
+        : op === "text"
+          ? { op, expected }
+          : { op };
+    try {
+      if (editing) {
+        const { step } = await patchStep(testId, editing.id, {
+          action: "assert",
+          selector: op === "url" ? null : selector || null,
+          assertion,
+        });
+        applyStep(testId, (t) => ({
+          ...t,
+          steps: t.steps
+            .map((s) => (s.id === step.id ? step : s))
+            .sort((a, b) => a.idx - b.idx),
+        }));
+        toast.success("Assertion updated");
+      } else {
+        const { step } = await insertStep(testId, {
+          idx: afterIdx + 1,
+          action: "assert",
+          selector: op === "url" ? null : selector || null,
+          assertion,
+        });
+        applyStep(testId, (t) => ({
+          ...t,
+          steps: [...t.steps, step].sort((a, b) => a.idx - b.idx),
+          stepCount: t.stepCount + 1,
+        }));
+        toast.success("Assertion step added");
+      }
+      setAssertionDraft(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save assertion");
+    }
+  };
+
+  const handleRemoveAssertion = async (testId: number, step: QfTestStep) => {
+    if (step.action !== "assert") return;
+    try {
+      const { step: updated } = await patchStep(testId, step.id, { assertion: null });
+      applyStep(testId, (t) => ({
+        ...t,
+        steps: t.steps.map((s) => (s.id === updated.id ? updated : s)),
+      }));
+      toast.success("Assertion removed");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove assertion");
     }
   };
 
@@ -549,10 +703,41 @@ const actionBadgeClass = (action: string) => {
                               <span className="flex-1 truncate text-foreground/80" title={step.intent}>
                                 {step.intent}
                               </span>
+                              {step.assertion && (
+                                <button
+                                  type="button"
+                                  disabled={running}
+                                  onClick={() => handleEditAssertion(step, selTest.id)}
+                                  title="Edit assertion"
+                                  className="shrink-0 rounded px-1 py-0.5 text-[10px] leading-none bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 disabled:opacity-40"
+                                >
+                                  assert: {step.assertion.op}
+                                </button>
+                              )}
                               {step.optional && (
                                 <span className="shrink-0 rounded px-1 py-0.5 text-[10px] bg-zinc-500/10 text-zinc-400 leading-none">
                                   skippable
                                 </span>
+                              )}
+                              <button
+                                type="button"
+                                disabled={running}
+                                onClick={() => handleAddAssertion(selTest.id, step.idx)}
+                                title="Add assertion after this step"
+                                className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-purple-400 disabled:opacity-20"
+                              >
+                                <Plus className="size-3" />
+                              </button>
+                              {step.action === "assert" && step.assertion && (
+                                <button
+                                  type="button"
+                                  disabled={running}
+                                  onClick={() => handleRemoveAssertion(selTest.id, step)}
+                                  title="Remove assertion"
+                                  className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-red-500 disabled:opacity-20"
+                                >
+                                  <X className="size-3" />
+                                </button>
                               )}
                               <button
                                 type="button"
@@ -569,6 +754,69 @@ const actionBadgeClass = (action: string) => {
                               </button>
                             </div>
                           ))}
+                        </div>
+                      )}
+                      {stepsOpen && !running && (
+                        <button
+                          type="button"
+                          onClick={() => handleAddAssertion(selTest.id, selTest.stepCount - 1)}
+                          className="mt-1 flex items-center gap-1 text-xs text-purple-400 hover:text-purple-300 transition-colors"
+                        >
+                          <ShieldCheck className="size-3" /> Add assertion step
+                        </button>
+                      )}
+                      {assertionDraft && assertionDraft.testId === selTest.id && (
+                        <div className="mt-1.5 space-y-1.5 rounded border border-purple-500/30 bg-purple-500/5 p-2">
+                          <p className="text-[10px] font-medium uppercase tracking-wide text-purple-400">
+                            {assertionDraft.editing ? "Edit assertion" : "New assertion step"}
+                          </p>
+                          <div className="flex items-center gap-1.5">
+                            {(["url", "text", "visible"] as const).map((op) => (
+                              <button
+                                key={op}
+                                type="button"
+                                onClick={() => setAssertionDraft((d) => (d ? { ...d, op } : d))}
+                                className={`rounded px-1.5 py-0.5 text-[10px] font-medium leading-none border ${
+                                  assertionDraft.op === op
+                                    ? "border-purple-400 bg-purple-500/20 text-purple-200"
+                                    : "border-transparent text-muted-foreground hover:text-foreground"
+                                }`}
+                              >
+                                {op}
+                              </button>
+                            ))}
+                          </div>
+                          {assertionDraft.op !== "url" && (
+                            <Input
+                              value={assertionDraft.selector}
+                              onChange={(e) => setAssertionDraft((d) => (d ? { ...d, selector: e.target.value } : d))}
+                              placeholder="selector (css/xpath), e.g. #toast-message"
+                              className="h-6 text-xs"
+                            />
+                          )}
+                          {assertionDraft.op === "url" ? (
+                            <Input
+                              value={assertionDraft.expected}
+                              onChange={(e) => setAssertionDraft((d) => (d ? { ...d, expected: e.target.value } : d))}
+                              placeholder="URL contains, e.g. /dashboard"
+                              className="h-6 text-xs"
+                            />
+                          ) : assertionDraft.op === "text" ? (
+                            <Input
+                              value={assertionDraft.expected}
+                              onChange={(e) => setAssertionDraft((d) => (d ? { ...d, expected: e.target.value } : d))}
+                              placeholder="expected text, e.g. Thanks for signing up"
+                              className="h-6 text-xs"
+                            />
+                          ) : null}
+                          <div className="flex items-center gap-1.5">
+                            <Button size="sm" variant="secondary" className="h-6 text-xs" onClick={handleSaveAssertion}>
+                              <Check className="size-3 mr-1" /> Save
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setAssertionDraft(null)}>
+                              Cancel
+                            </Button>
+                          </div>
                         </div>
                       )}
                     </div>

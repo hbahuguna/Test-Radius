@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useAuth, authFetch } from "@/lib/auth";
+import posthog from "@/lib/posthog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -171,6 +172,9 @@ const completedRunIdRef = useRef<string | null>(null);
       if (event.url) setCurrentUrl(event.url);
       if (event.title) setCurrentTitle(event.title);
     } else if (event.event === "done") {
+      posthog.capture("browser_agent_run_completed", {
+        success: event.success,
+      });
       const finishedRunId = currentRunIdRef.current;
       if (finishedRunId) {
         completedRunIdRef.current = finishedRunId;
@@ -178,6 +182,9 @@ const completedRunIdRef = useRef<string | null>(null);
       }
       setStatus(event.success ? "completed" : "failed");
     } else if (event.event === "error") {
+      posthog.capture("browser_agent_run_completed", {
+        success: false,
+      });
       const finishedRunId2 = currentRunIdRef.current ?? completedRunIdRef.current;
       if (finishedRunId2) {
         completedRunIdRef.current = finishedRunId2;
@@ -243,6 +250,9 @@ const completedRunIdRef = useRef<string | null>(null);
         }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
+        posthog.capture("browser_agent_run_completed", {
+          success: false,
+        });
         setStatus("failed");
         setRunError(error instanceof Error ? error.message : "Follow-up stream failed");
         toast.error(error instanceof Error ? error.message : "Follow-up stream failed");
@@ -276,6 +286,10 @@ const completedRunIdRef = useRef<string | null>(null);
     setCodeRunEvents([]);
     setCurrentUrl(url);
     setCurrentTitle(null);
+    posthog.capture("browser_agent_run_started", {
+      assertion_count: assertions.filter((assertion) => assertion.target || assertion.expected || assertion.pattern).length,
+      model_provider: modelProvider,
+    });
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -315,6 +329,9 @@ const completedRunIdRef = useRef<string | null>(null);
               clearInterval(screenshotTimer.current);
               screenshotTimer.current = null;
             }
+            posthog.capture("browser_agent_run_completed", {
+              success: false,
+            });
             setStatus("failed");
             setRunError(error.message);
             toast.error(error.message);
@@ -329,6 +346,9 @@ const completedRunIdRef = useRef<string | null>(null);
       if (err?.name === "AbortError") {
         setStatus("stopped");
       } else {
+        posthog.capture("browser_agent_run_completed", {
+          success: false,
+        });
         setStatus("failed");
         setRunError(err?.message || "Run failed");
         toast.error(err?.message || "Run failed");
@@ -385,6 +405,9 @@ const completedRunIdRef = useRef<string | null>(null);
     setCodeLoading(true);
     try {
       const result = await generatePlaywrightCode(completedRunId);
+      posthog.capture("playwright_code_generated", {
+        generation_method: "trace",
+      });
       setGeneratedCode(result.code);
       setCodeWarnings(result.warnings);
       setTraceDiagnostics(result.traceDiagnostics);
@@ -419,6 +442,9 @@ const completedRunIdRef = useRef<string | null>(null);
         setFinalizeActivity((prev) => [...prev, line]);
         if (event.type === "error" && event.message) setFinalizeError(event.message);
         if (event.type === "complete") {
+          posthog.capture("playwright_code_generated", {
+            generation_method: "llm",
+          });
           setGeneratedCode(event.code ?? null);
           setCodeWarnings(event.warnings ?? []);
           setScriptId(event.scriptId ?? null);
@@ -441,6 +467,7 @@ const completedRunIdRef = useRef<string | null>(null);
     if (!scriptId || generatedCode === null) return;
     try {
       const saved = await savePlaywrightCode(scriptId, generatedCode);
+      posthog.capture("playwright_code_saved");
       setScriptId(saved.scriptId);
       setScriptVersion(saved.version);
       setCodeWarnings(saved.warnings);
@@ -468,6 +495,7 @@ const completedRunIdRef = useRef<string | null>(null);
     if (!scriptId || codeRunLoading) return;
     setCodeRunLoading(true);
     setCodeRunEvents([]);
+    posthog.capture("playwright_code_run_started");
     try {
       const run = await runPlaywrightCode(scriptId, url);
       await streamPlaywrightCodeRun(run.codeRunId, (event) => {

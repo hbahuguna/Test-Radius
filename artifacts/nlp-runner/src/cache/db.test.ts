@@ -296,6 +296,41 @@ describe("QF-31 data-access layer", () => {
     expect(store.getTest(test.id)).toBeNull();
   });
 
+  it("insertStepAt shifts subsequent steps and keeps idx contiguous", () => {
+    const store = new DataStore(openDb(makeTempDir()));
+    const test = store.createTest({ name: "insertable", source: "recorder" });
+    store.addStep(test.id, { action: "navigate", value: "/login" });
+    store.addStep(test.id, { action: "click", selector: "#a" });
+    store.addStep(test.id, { action: "fill", selector: "#b", value: "x" });
+
+    const inserted = store.insertStepAt(test.id, 1, {
+      action: "assert",
+      assertion: { op: "visible", expected: true },
+    });
+
+    const full = store.getTestWithSteps(test.id)!;
+    expect(inserted.idx).toBe(1);
+    expect(full.steps.map((s) => s.action)).toEqual([
+      "navigate",
+      "assert",
+      "click",
+      "fill",
+    ]);
+    expect(full.steps.map((s) => s.idx)).toEqual([0, 1, 2, 3]);
+    expect(full.steps[1].assertion).toEqual({ op: "visible", expected: true });
+
+    store.insertStepAt(test.id, 0, { action: "go_back" });
+    const after = store.getTestWithSteps(test.id)!;
+    expect(after.steps.map((s) => s.action)).toEqual([
+      "go_back",
+      "navigate",
+      "assert",
+      "click",
+      "fill",
+    ]);
+    expect(after.steps.map((s) => s.idx)).toEqual([0, 1, 2, 3, 4]);
+  });
+
   it("inserts a run with llm_calls: 0 and reads it back in the listing", () => {
     const store = new DataStore(openDb(makeTempDir()));
     const test = store.createTest({ name: "runnable", source: "template" });
