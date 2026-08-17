@@ -75,14 +75,17 @@ export function buildLaunchArgs(options: {
     "--no-first-run",
     "--no-default-browser-check",
     `--window-size=${vw},${vh}`,
+    // Always disable automation signals - both headless and headful need this
+    // to avoid Google's "browser not secure" block.
+    "--disable-blink-features=AutomationControlled",
     ...(options.headless
-      ? ["--headless=new"]
-      : [
-          // Headful windows must not expose automation signals: Google blocks
-          // sign-in ("this browser or app may not be secure") when the page
-          // can read `navigator.webdriver` and friends.
-          "--disable-blink-features=AutomationControlled",
-        ]),
+      ? [
+          "--headless=new",
+          // Force desktop user agent in headless mode to avoid mobile view
+          // (mobile Google sign-in has stricter security checks).
+          "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        ]
+      : []),
   ];
 }
 

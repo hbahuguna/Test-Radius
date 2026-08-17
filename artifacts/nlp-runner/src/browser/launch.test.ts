@@ -80,13 +80,31 @@ describe("buildLaunchArgs", () => {
     expect(args).not.toContain("--remote-debugging-address=");
   });
 
-  it("disables automation-controlled features in headful mode only", () => {
+  it("disables automation-controlled features in both headful and headless modes", () => {
     expect(
       buildLaunchArgs({ headless: false, port: 0, userDataDir: "/tmp/profile" }),
     ).toContain("--disable-blink-features=AutomationControlled");
     expect(
       buildLaunchArgs({ headless: true, port: 0, userDataDir: "/tmp/profile" }),
-    ).not.toContain("--disable-blink-features=AutomationControlled");
+    ).toContain("--disable-blink-features=AutomationControlled");
+  });
+
+  it("sets desktop user agent in headless mode to avoid mobile view", () => {
+    const args = buildLaunchArgs({
+      headless: true,
+      port: 0,
+      userDataDir: "/tmp/profile",
+    });
+    expect(args).toContain("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
+  });
+
+  it("does not set user agent in headful mode", () => {
+    const args = buildLaunchArgs({
+      headless: false,
+      port: 0,
+      userDataDir: "/tmp/profile",
+    });
+    expect(args).not.toContain("--user-agent=Mozilla/5.0");
   });
 
   it("respects custom viewport dimensions", () => {
