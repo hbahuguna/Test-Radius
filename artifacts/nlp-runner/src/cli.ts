@@ -169,7 +169,9 @@ function googleLaunchOptions(config: Config): LaunchOptions {
   };
 }
 
-const isHeadlessServer = process.platform === "linux" && !process.env.DISPLAY;
+// Force headless on all Linux servers (including Replit) for performance.
+// Headful Chrome with Xvfb rendering is too slow on cloud environments.
+const isHeadlessServer = process.platform === "linux";
 
 export interface RunCommandArgs {
   target: string;

@@ -42,7 +42,10 @@ import {
 const CHROME_WARMING_UP_MSG =
   "Chrome is still downloading on this server (first cold start takes ~3 minutes). Please wait a moment and try again.";
 
-const isHeadlessServer = process.platform === "linux" && !process.env.DISPLAY;
+// Force headless on all Linux servers (including Replit) for performance.
+// Headful Chrome with Xvfb rendering is too slow on cloud environments.
+// Headless with real Chrome + pipe + --headless=new works fine for Google sign-in.
+const isHeadlessServer = process.platform === "linux";
 
 /**
  * Prepend variable values to the recording goal so the browser-use agent
