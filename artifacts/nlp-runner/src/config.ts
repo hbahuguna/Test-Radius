@@ -72,6 +72,17 @@ function msPlaywrightRoots(home: string): string[] {
   return [...roots];
 }
 
+function findInPath(name: string): string {
+  const pathEnv = process.env.PATH || "";
+  const delimiter = process.platform === "win32" ? ";" : ":";
+  for (const dir of pathEnv.split(delimiter)) {
+    if (!dir) continue;
+    const file = join(dir, name);
+    if (existsSync(file)) return file;
+  }
+  return "";
+}
+
 function cachedChromeCandidates(home = homedir()): string[] {
   const candidates: string[] = [];
 
@@ -130,6 +141,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
 export function resolveChromePath(chromePath: string): string {
   if (chromePath && chromePath !== "auto") return chromePath;
+
+  // 1. Try finding in the system shell PATH first (great for Nix/Replit/system packages)
+  const binaries = process.platform === "win32"
+    ? ["chrome.exe", "chromium.exe"]
+    : ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"];
+  for (const b of binaries) {
+    const pathBinary = findInPath(b);
+    if (pathBinary) return pathBinary;
+  }
+
+  // 2. Fall back to cached Playwright browsers and standard paths
   for (const candidate of [...cachedChromeCandidates(), ...CHROME_CANDIDATES]) {
     if (existsSync(candidate)) return candidate;
   }
@@ -150,7 +172,17 @@ export function resolveGoogleChromePath(
   if (chromePath && chromePath !== "auto") return chromePath;
   const override = process.env["QF_GOOGLE_CHROME_PATH"];
   if (override) return override;
-  // Chrome for Testing builds are real Chrome: mac, linux, win.
+
+  // 1. Search system PATH for real Chrome first
+  const googleBinaries = process.platform === "win32"
+    ? ["chrome.exe"]
+    : ["google-chrome", "google-chrome-stable"];
+  for (const b of googleBinaries) {
+    const pathBinary = findInPath(b);
+    if (pathBinary) return pathBinary;
+  }
+
+  // 2. Search Playwright Chrome-for-Testing cache
   const cftCandidates = [
     join("chrome-mac-x64", "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing"),
     join("chrome-linux64", "chrome"),
@@ -164,9 +196,13 @@ export function resolveGoogleChromePath(
       }
     }
   }
+
+  // 3. Search standard fixed directories for Chrome
   for (const candidate of CHROME_CANDIDATES) {
     if (existsSync(candidate)) return candidate;
   }
+
+  // 4. Fallback to general resolveChromePath
   return resolveChromePath("auto");
 }
 

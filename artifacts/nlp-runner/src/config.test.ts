@@ -61,6 +61,24 @@ describe("resolveChromePath", () => {
     expect(resolveChromePath("auto")).not.toBe("auto");
     expect(resolveChromePath("")).not.toBe("");
   });
+
+  it("resolves from the process.env.PATH environment variable first", () => {
+    const dir = makeTempDir();
+    const binaryName = process.platform === "win32" ? "chrome.exe" : "google-chrome";
+    const binaryPath = join(dir, binaryName);
+    writeFileSync(binaryPath, "#!/bin/sh\nexit 0");
+    if (process.platform !== "win32") {
+      require("node:fs").chmodSync(binaryPath, 0o755);
+    }
+
+    const prevPath = process.env.PATH;
+    process.env.PATH = dir;
+    try {
+      expect(resolveChromePath("auto")).toBe(binaryPath);
+    } finally {
+      process.env.PATH = prevPath;
+    }
+  });
 });
 
 describe("resolveGoogleChromePath", () => {
