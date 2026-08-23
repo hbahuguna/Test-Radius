@@ -1,0 +1,9 @@
+name,method,path,headers,body,expected_status,expected_json_path,expected_value,expected_operator,extract_as
+malformed_json_body,POST,/jobs,{"Content-Type":"application/json"},"{invalid",400,$.error,not_null,exists,
+get_jobs_after_error,GET,/jobs,{},{},200,$.data,not_null,exists,
+empty_body_post_jobs,POST,/jobs,{},"",400,$.error,not_null,exists,
+assign_no_engineer_id,POST,/jobs/1/assign,{},{},400,$.error,not_null,exists,
+hold_no_notes,POST,/jobs/1/hold,{},{},400,$.error,not_null,exists,
+cancel_no_notes,POST,/jobs/1/cancel,{},{},400,$.error,not_null,exists,
+defer_no_notes,POST,/jobs/1/defer,{},{},400,$.error,not_null,exists,
+fail_no_notes,POST,/jobs/1/fail,{},{},400,$.error,not_null,exists,

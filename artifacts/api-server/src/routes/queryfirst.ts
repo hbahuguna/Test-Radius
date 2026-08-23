@@ -8,6 +8,9 @@ import { requireSignedUp, type AuthedUser } from "../middlewares/auth";
 import { getOrCreateUser } from "../lib/auth";
 import { decryptKey } from "../lib/crypto";
 import { logger } from "../lib/logger";
+import { getFieldServeDb, FieldServeDataStore } from "../lib/fieldserve-db";
+import { API_SPEC } from "./fieldserve-ai";
+import OpenAI from "openai";
 import {
   openDatabase,
   DataStore,
@@ -216,6 +219,444 @@ function extractCompletionHint(doneMessage: string): string | null {
     .filter((s) => !s.includes("@") && !s.startsWith("http") && !s.startsWith("//"));
   if (matches.length === 0) return null;
   return matches.reduce((a, b) => (b.length > a.length ? b : a));
+}
+
+// ----- API suite runner -------------------------------------------------------
+
+function resolveAgainstHost(req: Request, url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  return `${req.protocol}://${req.get("host")}${url}`;
+}
+
+const STRIPPED_HEADERS = new Set([
+  "authorization",
+  "host",
+  "connection",
+  "accept-encoding",
+  "sec-fetch-mode",
+  "sec-fetch-site",
+  "sec-fetch-dest",
+  "user-agent",
+  "accept-language",
+  "content-length",
+  "content-type",
+]);
+
+async function runApiSuite(
+  req: Request,
+  res: Response,
+  suite: { id: number; name: string; mode: string },
+  authUser: AuthedUser,
+  signal: AbortSignal,
+): Promise<SuiteRun> {
+  const fsStore = new FieldServeDataStore(getFieldServeDb());
+  const store = getStore();
+  const currentAuth = req.headers.authorization;
+
+  // Reset + seed for a clean baseline
+  try {
+    await fetch(resolveAgainstHost(req, "/api/fieldserve/reset"), { method: "POST", headers: currentAuth ? { Authorization: currentAuth } : {} });
+    await fetch(resolveAgainstHost(req, "/api/fieldserve/seed"), { method: "POST", headers: currentAuth ? { Authorization: currentAuth } : {} });
+  } catch { /* continue even if setup fails */ }
+
+  // --- Entity ID resolution (same as fieldserve replay) ---
+  interface EntityType { name: string; fields: string[]; constraint?: (e: Record<string, unknown>) => boolean }
+  const ENTITY_TYPES: EntityType[] = [
+    { name: "sites", fields: ["siteId"] },
+    { name: "engineers", fields: ["engineerId"], constraint: (e) => e.status === "available" },
+    { name: "jobs", fields: ["jobId"] },
+  ];
+  const fieldToType = new Map<string, string>();
+  const pathToType = new Map<string, string>();
+  for (const et of ENTITY_TYPES) {
+    for (const f of et.fields) fieldToType.set(f, et.name);
+    pathToType.set(`/${et.name}/`, et.name);
+  }
+
+  function buildRegistry(): Record<string, Array<Record<string, unknown>>> {
+    const reg: Record<string, Array<Record<string, unknown>>> = {};
+    for (const et of ENTITY_TYPES) {
+      if (et.name === "sites") reg[et.name] = fsStore.listSites() as unknown as Array<Record<string, unknown>>;
+      else if (et.name === "engineers") reg[et.name] = fsStore.listEngineers() as unknown as Array<Record<string, unknown>>;
+      else if (et.name === "jobs") reg[et.name] = fsStore.listJobs().jobs as unknown as Array<Record<string, unknown>>;
+    }
+    return reg;
+  }
+  function firstValidId(reg: Record<string, Array<Record<string, unknown>>>, typeName: string): number | undefined {
+    const et = ENTITY_TYPES.find((t) => t.name === typeName);
+    const entities = reg[typeName];
+    if (!entities?.length || !et) return undefined;
+    if (et.constraint) { const m = entities.find((e) => et.constraint!(e)); return m ? Number(m.id) : undefined; }
+    return Number(entities[0].id);
+  }
+  let registry = buildRegistry();
+  function refreshRegistry() { registry = buildRegistry(); }
+
+  function resolveBodyIds(body: string | null): string | null {
+    if (!body) return body;
+    try {
+      const parsed = JSON.parse(body);
+      let changed = false;
+      for (const [key, val] of Object.entries(parsed)) {
+        if (typeof val !== "number" || val <= 0) continue;
+        const typeName = fieldToType.get(key);
+        if (!typeName) continue;
+        const entities = registry[typeName] ?? [];
+        const et = ENTITY_TYPES.find((t) => t.name === typeName);
+        const valid = entities.some((e) => Number(e.id) === val && (!et?.constraint || et.constraint(e)));
+        if (!valid) { const sub = firstValidId(registry, typeName); if (sub != null) { parsed[key] = sub; changed = true; } }
+      }
+      return changed ? JSON.stringify(parsed) : body;
+    } catch { return body; }
+  }
+
+  function resolvePathIds(stepPath: string): string {
+    let result = stepPath;
+    for (const [pattern, typeName] of pathToType) {
+      const re = new RegExp(`(${pattern.replace(/\//g, "\\/")})(\\d+)`);
+      result = result.replace(re, (_m, prefix: string, idStr: string) => {
+        const id = Number(idStr);
+        const exists = (registry[typeName] ?? []).some((e) => Number(e.id) === id);
+        if (exists) return `${prefix}${id}`;
+        const sub = firstValidId(registry, typeName);
+        return sub != null ? `${prefix}${sub}` : `${prefix}${id}`;
+      });
+    }
+    return result;
+  }
+  // --- end entity resolution ---
+
+  // --- Healing: deterministic state machine + LLM fallback ---
+
+  // The FieldServe job state machine (from fieldserve-db.ts)
+  const JOB_TRANSITIONS: Record<string, string[]> = {
+    created: ["scheduled", "cancelled"],
+    scheduled: ["assigned", "cancelled"],
+    assigned: ["engineer-dispatched", "cancelled"],
+    "engineer-dispatched": ["en-route", "cancelled"],
+    "en-route": ["on-site", "cancelled"],
+    "on-site": ["checking-in", "cancelled"],
+    "checking-in": ["waiting-for-access", "waiting-for-equipment", "in-progress"],
+    "waiting-for-access": ["in-progress", "facility-not-accessible"],
+    "waiting-for-equipment": ["in-progress", "parts-required"],
+    "in-progress": ["on-hold", "completed", "failed"],
+    "on-hold": ["in-progress", "cancelled"],
+    completed: [],
+    failed: ["requires-rescheduling"],
+    cancelled: [],
+  };
+
+  // Map API path segment → target state name
+  const PATH_TO_STATE: Record<string, string> = {
+    schedule: "scheduled",
+    assign: "assigned",
+    dispatch: "engineer-dispatched",
+    "en-route": "en-route",
+    "on-site": "on-site",
+    "check-in": "checking-in",
+    "start-work": "in-progress",
+  };
+
+  // Map state name → API path segment (for calling intermediate transitions)
+  const STATE_TO_PATH: Record<string, string> = Object.fromEntries(Object.entries(PATH_TO_STATE).map(([k, v]) => [v, k]));
+
+  /** BFS shortest path through the state machine from `from` to `to`. */
+  function findTransitionPath(from: string, to: string): string[] {
+    if (from === to) return [];
+    const visited = new Set<string>([from]);
+    const queue: Array<{ state: string; path: string[] }> = [{ state: from, path: [] }];
+    while (queue.length > 0) {
+      const { state, path } = queue.shift()!;
+      for (const next of JOB_TRANSITIONS[state] ?? []) {
+        if (next === to) return [...path, next];
+        if (!visited.has(next)) { visited.add(next); queue.push({ state: next, path: [...path, next] }); }
+      }
+    }
+    return [];
+  }
+
+  /** Parse "Cannot transition from 'X' to 'Y'" from error body. */
+  function parseTransitionError(errorBody: string): { from: string; to: string } | null {
+    try {
+      const parsed = JSON.parse(errorBody);
+      const msg: string = parsed.message ?? "";
+      const m = msg.match(/Cannot transition from '(\w[\w-]*)' to '(\w[\w-]*)'/);
+      if (m) return { from: m[1], to: m[2] };
+    } catch { /* not JSON */ }
+    return null;
+  }
+
+  /** Extract the job ID from a path like /api/fieldserve/jobs/123/dispatch. */
+  function extractJobId(stepPath: string): number | null {
+    const m = stepPath.match(/\/jobs\/(\d+)/);
+    return m ? Number(m[1]) : null;
+  }
+
+  /**
+   * Deterministic state-machine healing: when a transition fails with 409,
+   * compute the exact intermediate calls needed via BFS and execute them.
+   * Returns true if healing was performed.
+   */
+  async function healStateMachine(
+    step: { method: string; path: string; requestBody: string | null },
+    respStatus: number,
+    errorBody: string,
+    baseUrl: string,
+    headers: Record<string, string>,
+  ): Promise<boolean> {
+    if (respStatus !== 409) return false;
+    const parsed = parseTransitionError(errorBody);
+    if (!parsed) return false;
+
+    // Figure out which state the step is trying to reach
+    const pathSegment = step.path.split("/").filter(Boolean).pop() ?? "";
+    const targetState = PATH_TO_STATE[pathSegment];
+    if (!targetState) return false;
+
+    const jobId = extractJobId(step.path);
+    if (jobId == null) return false;
+
+    const transitionPath = findTransitionPath(parsed.from, targetState);
+    if (transitionPath.length === 0) {
+      logger.warn({ from: parsed.from, to: targetState }, "api-suite: no valid transition path");
+      return false;
+    }
+
+    logger.info({ jobId, from: parsed.from, to: targetState, steps: transitionPath }, "api-suite: state-machine healing");
+    for (const state of transitionPath) {
+      const segment = STATE_TO_PATH[state];
+      if (!segment) { logger.warn({ state }, "api-suite: no API path for state"); continue; }
+      const healUrl = new URL(`/api/fieldserve/jobs/${jobId}/${segment}`, baseUrl).toString();
+      try {
+        const resp = await fetch(healUrl, { method: "POST", headers });
+        logger.debug({ state, status: resp.status }, "api-suite: heal transition");
+      } catch (err) {
+        logger.warn({ err, state }, "api-suite: heal transition failed");
+      }
+    }
+    refreshRegistry();
+    return true;
+  }
+
+  // --- LLM healer (fallback for non-state-machine errors) ---
+  const PROVIDER_BASE_URLS: Record<string, string> = { openai: "https://api.openai.com/v1", google: "https://generativelanguage.googleapis.com/v1beta/openai", openrouter: "https://openrouter.ai/api/v1", poolside: "https://inference.poolside.ai/v1" };
+  const PROVIDER_DEFAULT_MODELS: Record<string, string> = { openai: "gpt-4o-mini", google: "gemini-3.5-flash", openrouter: "poolside/laguna-xs-2.1", poolside: "poolside/laguna-xs-2.1" };
+  let healerClient: OpenAI | null = null;
+  let healerModel = "gpt-4o-mini";
+  {
+    const user = (await getOrCreateUser(authUser))!;
+    const provider = user.modelProvider || "openai";
+    const keyRow = await db.select().from(userApiKeysTable).where(eq(userApiKeysTable.userId, user.id)).limit(10);
+    const match = keyRow.find((k) => k.provider === provider);
+    let apiKey: string | undefined;
+    if (match) apiKey = decryptKey(JSON.parse(match.encryptedKey));
+    else if (process.env.OPENAI_API_KEY) apiKey = process.env.OPENAI_API_KEY;
+    if (apiKey && PROVIDER_BASE_URLS[provider]) {
+      healerClient = new OpenAI({ apiKey, baseURL: PROVIDER_BASE_URLS[provider] });
+      healerModel = PROVIDER_DEFAULT_MODELS[provider] || "gpt-4o-mini";
+      logger.info({ provider, model: healerModel }, "api-suite: LLM healer initialised");
+    }
+  }
+
+  async function healStepLLM(
+    failedStep: { method: string; path: string; requestBody: string | null },
+    errorBody: string,
+    currentDataSummary: string,
+  ): Promise<Array<{ method: string; path: string; body?: Record<string, unknown> }>> {
+    if (!healerClient) return [];
+    try {
+      const prompt = `A replay step failed. Figure out what prerequisite API calls are needed so the failed step can succeed.
+
+API Spec:
+${API_SPEC}
+
+Current data state:
+${currentDataSummary}
+
+Failed step:
+  ${failedStep.method} ${failedStep.path}
+  Body: ${failedStep.requestBody ?? "(empty)"}
+
+Error response:
+${errorBody}
+
+Reply with ONLY a JSON array of prerequisite calls (max 5). Each element:
+{ "method": "GET|POST|PATCH|DELETE", "path": "relative path like /jobs or /sites", "body": {} }
+
+Rules:
+- If the error is "invalid_transition", call the intermediate transition endpoints first.
+- If the error is "not found" or "not_found", you probably need to fix a URL path ID — do NOT create new entities.
+- If the error mentions an entity being unavailable, find an available one by GETting the list first.
+- Return [] (empty array) if you cannot determine a fix.
+- Keep it minimal — only the calls strictly necessary.`;
+
+      const completion = await healerClient.chat.completions.create({ model: healerModel, messages: [{ role: "user", content: prompt }], temperature: 0.1, response_format: { type: "json_object" } });
+      const raw = completion.choices[0]?.message?.content ?? "";
+      let parsed: unknown;
+      try { parsed = JSON.parse(raw); } catch { return []; }
+      if (Array.isArray(parsed)) return parsed as Array<{ method: string; path: string; body?: Record<string, unknown> }>;
+      if (parsed && typeof parsed === "object" && "fixes" in parsed && Array.isArray((parsed as any).fixes)) return (parsed as any).fixes;
+      return [];
+    } catch (err) {
+      logger.error({ err }, "api-suite: healer LLM call failed");
+      return [];
+    }
+  }
+
+  function dataSummary(): string {
+    return ENTITY_TYPES.map((et) => {
+      const entities = registry[et.name] ?? [];
+      return `${et.name}: [${entities.map((e) => `id=${e.id}`).join(", ")}]`;
+    }).join("\n");
+  }
+  // --- end healing ---
+
+  const suiteRun = store.createSuiteRun({ suiteId: suite.id, status: "running", mode: suite.mode as "sequential" });
+  const emit = (event: SuiteRunnerEvent) => sseWrite(res, { event: "suite", ...event });
+
+  function ensureTest(sessionName: string) {
+    const testName = `[API] ${sessionName}`;
+    const existing = store.listTests().find((t) => t.name === testName);
+    if (existing) return existing;
+    return store.createTest({ name: testName, source: "template" });
+  }
+
+  try {
+    const suiteWithSessions = store.getSuiteWithApiSessions(suite.id);
+    if (!suiteWithSessions) throw new Error(`Suite #${suite.id} not found`);
+    const sessions = suiteWithSessions.apiSessions;
+    let anySessionFailed = false;
+
+    for (const sa of sessions) {
+      if (signal.aborted) throw new Error("Aborted");
+
+      const session = fsStore.getRecordedSession(sa.sessionId);
+      if (!session) {
+        anySessionFailed = true;
+        emit({ type: "test-done", suiteRunId: suiteRun.id, testId: sa.sessionId, runId: 0, success: false, error: `Session #${sa.sessionId} not found` });
+        continue;
+      }
+      const steps = fsStore.getRecordedSteps(session.id);
+      const test = ensureTest(session.name);
+      const run = store.createRun({ testId: test.id, status: "running", suiteRunId: suiteRun.id });
+
+      let sessionFailed = false;
+      let stepIdx = 0;
+      for (const step of steps) {
+        if (signal.aborted) throw new Error("Aborted");
+        const resolvedPath = resolvePathIds(step.path);
+        const url = new URL(resolvedPath, resolveAgainstHost(req, session.baseUrl)).toString();
+        const replayHeaders: Record<string, string> = { "Content-Type": "application/json" };
+        if (currentAuth) replayHeaders["Authorization"] = currentAuth;
+        for (const [k, v] of Object.entries(step.requestHeaders || {})) {
+          if (!STRIPPED_HEADERS.has(k.toLowerCase())) replayHeaders[k] = v;
+        }
+        const fetchOpts: RequestInit = { method: step.method, headers: replayHeaders };
+        if (!["GET", "HEAD"].includes(step.method) && step.requestBody) {
+          fetchOpts.body = resolveBodyIds(step.requestBody) ?? step.requestBody;
+        }
+
+        try {
+          const start = Date.now();
+          let resp = await fetch(url, fetchOpts);
+          let duration = Date.now() - start;
+          let respBody = "";
+          if (!["GET", "HEAD"].includes(step.method)) {
+            respBody = (await resp.text().catch(() => "")).slice(0, 10240);
+          }
+
+          // Healing: try deterministic state-machine first, then LLM fallback
+          if (resp.status >= 400) {
+            const healHeaders: Record<string, string> = { "Content-Type": "application/json" };
+            if (currentAuth) healHeaders["Authorization"] = currentAuth;
+            let healed = false;
+
+            // 1) Deterministic state-machine healing (no LLM needed)
+            if (resp.status === 409) {
+              healed = await healStateMachine(step, resp.status, respBody, resolveAgainstHost(req, session.baseUrl), healHeaders);
+            }
+
+            // 2) LLM fallback for non-state-machine errors
+            if (!healed && healerClient) {
+              const fixes = await healStepLLM({ method: step.method, path: step.path, requestBody: step.requestBody }, respBody, dataSummary());
+              if (fixes.length > 0) {
+                logger.info({ seq: step.seq, fixes: fixes.map((f) => `${f.method} ${f.path}`) }, "api-suite: LLM heal produced fixes");
+                for (const fix of fixes) {
+                  try {
+                    const fixPath = fix.path.startsWith("/api/fieldserve") ? fix.path : `/api/fieldserve${fix.path}`;
+                    const fixUrl = new URL(resolvePathIds(fixPath), resolveAgainstHost(req, session.baseUrl));
+                    const fixOpts: RequestInit = { method: fix.method, headers: healHeaders, ...(fix.body && !["GET", "HEAD"].includes(fix.method) ? { body: JSON.stringify(fix.body) } : {}) };
+                    await fetch(fixUrl.toString(), fixOpts);
+                  } catch { /* continue */ }
+                }
+                refreshRegistry();
+                healed = true;
+              }
+            }
+
+            // Retry the original step after healing
+            if (healed) {
+              fetchOpts.body = undefined;
+              if (!["GET", "HEAD"].includes(step.method) && step.requestBody) {
+                fetchOpts.body = resolveBodyIds(step.requestBody) ?? step.requestBody;
+              }
+              const retryStart = Date.now();
+              resp = await fetch(url, fetchOpts);
+              duration = Date.now() - retryStart;
+              respBody = "";
+              if (!["GET", "HEAD"].includes(step.method)) {
+                respBody = (await resp.text().catch(() => "")).slice(0, 10240);
+              }
+            }
+          }
+
+          const pass = resp.status === step.responseStatus;
+          if (!pass) sessionFailed = true;
+          if (step.method === "POST" && resp.status >= 200 && resp.status < 300) refreshRegistry();
+          store.addRunStep(run.id, { idx: stepIdx, status: pass ? "passed" : "failed", detail: { method: step.method, path: step.path, status: resp.status, expected: step.responseStatus, duration } });
+          emit({
+            type: "step",
+            suiteRunId: suiteRun.id,
+            testId: test.id,
+            runId: run.id,
+            idx: stepIdx,
+            status: pass ? "passed" : "failed",
+            intent: `${step.method} ${step.path} → ${resp.status} (expected ${step.responseStatus})`,
+            detail: { method: step.method, path: step.path, status: resp.status, expected: step.responseStatus, duration },
+          });
+        } catch (err) {
+          sessionFailed = true;
+          store.addRunStep(run.id, { idx: stepIdx, status: "failed", detail: { method: step.method, path: step.path, error: err instanceof Error ? err.message : String(err) } });
+          emit({
+            type: "step",
+            suiteRunId: suiteRun.id,
+            testId: test.id,
+            runId: run.id,
+            idx: stepIdx,
+            status: "failed",
+            intent: `${step.method} ${step.path} → error`,
+            detail: { method: step.method, path: step.path, error: err instanceof Error ? err.message : String(err) },
+          });
+        }
+        stepIdx++;
+      }
+
+      store.finishRun(run.id, sessionFailed ? "failed" : "passed");
+      if (sessionFailed) anySessionFailed = true;
+      emit({ type: "test-done", suiteRunId: suiteRun.id, testId: test.id, runId: run.id, success: !sessionFailed, ...(sessionFailed ? { error: `Session "${session.name}" had failures` } : {}) });
+    }
+
+    store.finishSuiteRun(suiteRun.id, anySessionFailed ? "failed" : "passed");
+    const finalRun = store.getSuiteRun(suiteRun.id)!;
+    emit({ type: "suite-done", suiteRunId: finalRun.id, success: !anySessionFailed });
+    return finalRun;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    store.finishSuiteRun(suiteRun.id, "failed", msg);
+    const failed = store.getSuiteRun(suiteRun.id)!;
+    emit({ type: "suite-done", suiteRunId: failed.id, success: false, error: msg });
+    return failed;
+  }
 }
 
 // ----- routes ----------------------------------------------------------------
@@ -1137,16 +1578,34 @@ function parseMembers(raw: unknown, idKey: string): MemberInput[] | null {
 }
 
 function suitePayload(store: DataStore, suiteId: number) {
-  const s = store.getSuiteWithTests(suiteId);
+  const s = store.getSuite(suiteId);
   if (!s) return null;
+  if (s.type === "api") {
+    const apiS = store.getSuiteWithApiSessions(suiteId);
+    return {
+      id: s.id,
+      name: s.name,
+      description: s.description,
+      mode: s.mode,
+      type: s.type,
+      createdAt: s.createdAt,
+      updatedAt: s.updatedAt,
+      tests: [],
+      apiSessions: (apiS?.apiSessions ?? []).map((as) => ({ suiteApiSessionId: as.id, sessionId: as.sessionId, position: as.position })),
+    };
+  }
+  const loaded = store.getSuiteWithTests(suiteId);
+  if (!loaded) return null;
   return {
-    id: s.id,
-    name: s.name,
-    description: s.description,
-    mode: s.mode,
-    createdAt: s.createdAt,
-    updatedAt: s.updatedAt,
-    tests: s.tests.map((t) => {
+    id: loaded.id,
+    name: loaded.name,
+    description: loaded.description,
+    mode: loaded.mode,
+    type: loaded.type,
+    createdAt: loaded.createdAt,
+    updatedAt: loaded.updatedAt,
+    apiSessions: [],
+    tests: loaded.tests.map((t) => {
       const test = store.getTest(t.testId);
       return {
         suiteTestId: t.id,
@@ -1286,45 +1745,58 @@ function trainRunSummary(store: DataStore, run: TrainRun) {
   };
 }
 
-// GET /queryfirst/suites — list all suites
-router.get("/suites", async (_req: Request, res: Response) => {
+// GET /queryfirst/suites — list all suites (optionally filter by ?type=ui|api)
+router.get("/suites", async (req: Request, res: Response) => {
   try {
     const store = getStore();
-    res.json({ suites: store.listSuites().map((s) => suitePayload(store, s.id)) });
+    const type = req.query.type as string | undefined;
+    if (type && type !== "ui" && type !== "api") {
+      res.status(400).json({ error: "invalid_request", message: "type must be 'ui' or 'api'" });
+      return;
+    }
+    res.json({ suites: store.listSuites(type).map((s) => suitePayload(store, s.id)) });
   } catch (err) {
     logger.error({ err }, "queryfirst: list suites failed");
     res.status(500).json({ error: "internal_error", message: "Failed to list suites" });
   }
 });
 
-// POST /queryfirst/suites — create a suite (optionally with member tests)
+// POST /queryfirst/suites — create a suite (optionally with member tests or API sessions)
 router.post("/suites", async (req: Request, res: Response) => {
   try {
-    const { name, description, mode, testIds, tests } = req.body ?? {};
+    const { name, description, mode, testIds, tests, type, apiSessionIds } = req.body ?? {};
     if (!name || typeof name !== "string") {
       res.status(400).json({ error: "invalid_request", message: "name is required" });
       return;
     }
+    const suiteType = type === "api" ? "api" : "ui";
     const m = parseMode(mode);
     if (m === null && mode !== undefined) {
       res.status(400).json({ error: "invalid_request", message: "mode must be sequential or parallel" });
       return;
     }
-    const members = tests !== undefined ? parseMembers(tests, "testId") : testIds !== undefined ? parseMembers(testIds, "testId") : [];
-    if (members === null) {
-      res.status(400).json({ error: "invalid_request", message: "tests/testIds must be an array of {testId, parallel?} or positive ids" });
-      return;
-    }
     const store = getStore();
-    for (const mem of members) {
-      if (!store.getTest(mem.id)) {
-        res.status(400).json({ error: "invalid_request", message: `Test #${mem.id} not found` });
+    if (suiteType === "api") {
+      const sessionIds: number[] = Array.isArray(apiSessionIds) ? apiSessionIds.map(Number).filter((n: number) => Number.isInteger(n) && n > 0) : [];
+      const suite = store.createSuite({ name, description: description ?? null, mode: m ?? "sequential", type: "api" });
+      if (sessionIds.length > 0) store.setSuiteApiSessions(suite.id, sessionIds);
+      res.status(201).json({ suite: suitePayload(store, suite.id) });
+    } else {
+      const members = tests !== undefined ? parseMembers(tests, "testId") : testIds !== undefined ? parseMembers(testIds, "testId") : [];
+      if (members === null) {
+        res.status(400).json({ error: "invalid_request", message: "tests/testIds must be an array of {testId, parallel?} or positive ids" });
         return;
       }
+      for (const mem of members) {
+        if (!store.getTest(mem.id)) {
+          res.status(400).json({ error: "invalid_request", message: `Test #${mem.id} not found` });
+          return;
+        }
+      }
+      const suite = store.createSuite({ name, description: description ?? null, mode: m ?? "sequential", type: "ui" });
+      if (members.length > 0) store.setSuiteTests(suite.id, members.map((mem) => ({ testId: mem.id, parallel: mem.parallel })));
+      res.status(201).json({ suite: suitePayload(store, suite.id) });
     }
-    const suite = store.createSuite({ name, description: description ?? null, mode: m ?? "sequential" });
-    if (members.length > 0) store.setSuiteTests(suite.id, members.map((mem) => ({ testId: mem.id, parallel: mem.parallel })));
-    res.status(201).json({ suite: suitePayload(store, suite.id) });
   } catch (err) {
     logger.error({ err }, "queryfirst: create suite failed");
     res.status(500).json({ error: "internal_error", message: "Failed to create suite" });
@@ -1420,6 +1892,34 @@ router.put("/suites/:id/tests", async (req: Request, res: Response) => {
   }
 });
 
+// PUT /queryfirst/suites/:id/api-sessions — replace API session members
+router.put("/suites/:id/api-sessions", async (req: Request, res: Response) => {
+  try {
+    const { apiSessionIds } = req.body ?? {};
+    if (!Array.isArray(apiSessionIds)) {
+      res.status(400).json({ error: "invalid_request", message: "apiSessionIds must be an array of session IDs" });
+      return;
+    }
+    const sessionIds = apiSessionIds.map(Number).filter((n: number) => Number.isInteger(n) && n > 0);
+    const store = getStore();
+    const id = Number(req.params.id);
+    const suite = store.getSuite(id);
+    if (!suite) {
+      res.status(404).json({ error: "not_found", message: `Suite #${id} not found` });
+      return;
+    }
+    if (suite.type !== "api") {
+      res.status(400).json({ error: "invalid_request", message: "This endpoint is only for API suites" });
+      return;
+    }
+    store.setSuiteApiSessions(id, sessionIds);
+    res.json({ suite: suitePayload(store, id) });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: set suite api sessions failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to set suite API sessions" });
+  }
+});
+
 // GET /queryfirst/suites/:id/runs — suite run history
 router.get("/suites/:id/runs", async (req: Request, res: Response) => {
   try {
@@ -1469,22 +1969,26 @@ router.post("/suites/:id/run", async (req: Request, res: Response) => {
   sseHeaders(res);
   sseWrite(res, { event: "started", kind: "suite", suiteId, suiteName: suite.name });
 
-  const runner = new SuiteRunner(store, {
-    launch: async () => {
-      const s = await BrowserSession.launch({ headless: true, timeoutMs: 20_000 });
-      return { page: await s.newPage(), close: () => s.close() };
-    },
-    screenshotBaseDir: suiteScreenshotsDir(),
-    concurrency: 4,
-  });
-
   try {
-    const suiteRun = await runner.runSuite(suiteId, {
-      signal: controller.signal,
-      onEvent: (event: SuiteRunnerEvent) => {
-        sseWrite(res, { event: "suite", ...event });
-      },
-    });
+    let suiteRun: SuiteRun;
+    if (suite.type === "api") {
+      suiteRun = await runApiSuite(req, res, suite, authUser, controller.signal);
+    } else {
+      const runner = new SuiteRunner(store, {
+        launch: async () => {
+          const s = await BrowserSession.launch({ headless: true, timeoutMs: 20_000 });
+          return { page: await s.newPage(), close: () => s.close() };
+        },
+        screenshotBaseDir: suiteScreenshotsDir(),
+        concurrency: 4,
+      });
+      suiteRun = await runner.runSuite(suiteId, {
+        signal: controller.signal,
+        onEvent: (event: SuiteRunnerEvent) => {
+          sseWrite(res, { event: "suite", ...event });
+        },
+      });
+    }
     sseWrite(res, {
       event: "done",
       kind: "suite",

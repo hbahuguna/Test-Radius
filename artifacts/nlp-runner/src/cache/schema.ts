@@ -193,6 +193,21 @@ export const MIGRATIONS: Migration[] = [
       `ALTER TABLE tests ADD COLUMN completion_hint TEXT`,
     ],
   },
+  {
+    version: 7,
+    name: "add-suite-type-and-api-sessions",
+    sql: [
+      `ALTER TABLE suites ADD COLUMN type TEXT NOT NULL DEFAULT 'ui'`,
+      `CREATE TABLE suite_api_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        suite_id INTEGER NOT NULL REFERENCES suites(id) ON DELETE CASCADE,
+        session_id INTEGER NOT NULL,
+        position INTEGER NOT NULL,
+        UNIQUE(suite_id, position)
+      )`,
+      `CREATE INDEX idx_suite_api_sessions_suite_id ON suite_api_sessions(suite_id)`,
+    ],
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;

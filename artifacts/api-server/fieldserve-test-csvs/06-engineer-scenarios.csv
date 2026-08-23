@@ -1,0 +1,11 @@
+name,method,path,headers,body,expected_status,expected_json_path,expected_value,expected_operator,extract_as
+Create new job for variable capture,POST,/jobs,{"Content-Type":"application/json"},{"title":"Variable capture test","siteId":1,"skillRequired":"electrical","priority":"high"},201,$.job.id,exists,exists,created_job_id
+GET created job by captured ID,GET,/jobs/{{created_job_id}},{},{},200,$.job.id,{{created_job_id}},equals,
+Assign engineer 6 to captured job,POST,/jobs/{{created_job_id}}/assign,{"Content-Type":"application/json"},{"engineerId":6},200,$.job.status,assigned,equals,
+GET engineer 6 — verify busy,GET,/engineers/6,{},{},200,$.engineer.status,busy,equals,
+Complete captured job,POST,/jobs/{{created_job_id}}/complete,{"Content-Type":"application/json"},{"notes":"Variable chain complete"},200,$.job.status,completed,equals,
+GET engineer 6 — verify available,GET,/engineers/6,{},{},200,$.engineer.status,available,equals,
+List engineers filtered by skill electrical,GET,/engineers?skill=electrical,{},{},200,$.data,exists,exists,
+Create duplicate engineer — expect 409,POST,/engineers,{"Content-Type":"application/json"},{"firstName":"Ahmed","lastName":"Hassan","email":"ahmed.hassan@fieldserve.co.uk","phone":"+44 7700 100001","employeeId":"ENG-001","skills":["electrical"]},409,$.error,conflict,contains,
+List available engineers,GET,/engineers?status=available,{},{},200,$.data[0].status,available,equals,
+Get engineer 1 history,GET,/engineers/1/history,{},{},200,$.history,exists,exists,

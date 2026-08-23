@@ -1,0 +1,24 @@
+name,method,path,headers,body,expected_status,expected_json_path,expected_value,expected_operator,extract_as
+chain1_create,POST,/jobs,{},{"title":"E2E Chain 1 Job","siteId":2,"skillRequired":"plumbing","priority":"high"},201,$.job.id,not_null,exists,chain1_job_id
+chain1_verify_created,GET,/jobs/{{chain1_job_id}},{},{},200,$.job.status,created,equals,
+chain1_assign,POST,/jobs/{{chain1_job_id}}/assign,{},{"engineerId":1},200,$.job.status,assigned,equals,
+chain1_dispatch,POST,/jobs/{{chain1_job_id}}/dispatch,{},{},200,$.job.status,dispatched,equals,
+chain1_en_route,POST,/jobs/{{chain1_job_id}}/en-route,{},{},200,$.job.status,en-route,equals,
+chain1_on_site,POST,/jobs/{{chain1_job_id}}/on-site,{},{"lat":53.46,"lng":-2.35},200,$.job.status,on-site,equals,
+chain1_check_in,POST,/jobs/{{chain1_job_id}}/check-in,{},{},200,$.job.status,checked-in,equals,
+chain1_start_work,POST,/jobs/{{chain1_job_id}}/start-work,{},{},200,$.job.status,in-progress,equals,
+chain1_hold,POST,/jobs/{{chain1_job_id}}/hold,{},{"notes":"Need supervisor approval"},200,$.job.status,on-hold,equals,
+chain1_resume,POST,/jobs/{{chain1_job_id}}/resume,{},{},200,$.job.status,in-progress,equals,
+chain1_complete,POST,/jobs/{{chain1_job_id}}/complete,{},{"notes":"Chain 1 complete"},200,$.job.status,completed,equals,
+chain1_verify_final,GET,/jobs/{{chain1_job_id}},{},{},200,$.job.status,completed,equals,
+chain2_create,POST,/jobs,{},{"title":"E2E Chain 2 Job","siteId":3,"skillRequired":"hvac","priority":"medium"},201,$.job.id,not_null,exists,chain2_job_id
+chain2_assign,POST,/jobs/{{chain2_job_id}}/assign,{},{"engineerId":6},200,$.job.status,assigned,equals,
+chain2_verify_engineer,GET,/engineers/6,{},{},200,$.engineer.status,busy,equals,
+chain2_dispatch,POST,/jobs/{{chain2_job_id}}/dispatch,{},{},200,$.job.status,dispatched,equals,
+chain2_cancel,POST,/jobs/{{chain2_job_id}}/cancel,{},{"notes":"Client rescheduled"},200,$.job.status,cancelled,equals,
+chain2_verify_cancelled,GET,/jobs/{{chain2_job_id}},{},{},200,$.job.status,cancelled,equals,
+chain2_verify_engineer_free,GET,/engineers/6,{},{},200,$.engineer.status,available,equals,
+chain3_create,POST,/jobs,{},{"title":"E2E Chain 3 Job","siteId":1,"skillRequired":"electrical","priority":"critical"},201,$.job.id,not_null,exists,chain3_job_id
+chain3_assign,POST,/jobs/{{chain3_job_id}}/assign,{},{"engineerId":9},200,$.job.status,assigned,equals,
+chain3_dispatch,POST,/jobs/{{chain3_job_id}}/dispatch,{},{},200,$.job.status,dispatched,equals,
+chain3_dashboard_check,GET,/dashboard/stats,{},{},200,$.stats.totalJobs,not_null,exists,

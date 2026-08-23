@@ -138,6 +138,7 @@ describe("QF-30 schema", () => {
         "site_memory",
         "suites",
         "suite_tests",
+        "suite_api_sessions",
         "suite_runs",
         "trains",
         "train_suites",

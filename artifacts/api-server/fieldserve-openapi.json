@@ -1,0 +1,1296 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "FieldServe API",
+    "description": "Mitie-style job workflow engine for facilities management. Supports job lifecycle with 18 states, engineer assignment, site management, and dashboard analytics.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    { "url": "/api/fieldserve", "description": "FieldServe API" }
+  ],
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/jobs": {
+      "get": {
+        "operationId": "listJobs",
+        "summary": "List jobs with filters",
+        "tags": ["Jobs"],
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "$ref": "#/components/schemas/JobStatus" } },
+          { "name": "engineer_id", "in": "query", "schema": { "type": "integer" } },
+          { "name": "site_id", "in": "query", "schema": { "type": "integer" } },
+          { "name": "priority", "in": "query", "schema": { "$ref": "#/components/schemas/Priority" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 0 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 200 } },
+          { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["created_at", "priority", "scheduled_date"], "default": "created_at" } },
+          { "name": "order", "in": "query", "schema": { "type": "string", "enum": ["asc", "desc"], "default": "desc" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated job list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jobs": { "type": "array", "items": { "$ref": "#/components/schemas/Job" } },
+                    "total": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createJob",
+        "summary": "Create a new job",
+        "tags": ["Jobs"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateJobInput" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Job created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "job": { "$ref": "#/components/schemas/Job" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/jobs/{id}": {
+      "get": {
+        "operationId": "getJob",
+        "summary": "Get job with site, engineer, updates, and attachments",
+        "tags": ["Jobs"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job with relations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "job": { "$ref": "#/components/schemas/JobWithRelations" }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "operationId": "updateJob",
+        "summary": "Update job fields",
+        "tags": ["Jobs"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateJobInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Job updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "job": { "$ref": "#/components/schemas/Job" }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "operationId": "deleteJob",
+        "summary": "Delete a job (only status=created)",
+        "tags": ["Jobs"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/jobs/{id}/assign": {
+      "post": {
+        "operationId": "assignJob",
+        "summary": "Assign an engineer to a job",
+        "tags": ["Transitions"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["engineerId"],
+                "properties": {
+                  "engineerId": { "type": "integer" },
+                  "notes": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/JobResponse" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/jobs/{id}/dispatch": {
+      "post": {
+        "operationId": "dispatchJob",
+        "summary": "Dispatch engineer to site",
+        "tags": ["Transitions"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TransitionBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/JobResponse" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/jobs/{id}/en-route": {
+      "post": {
+        "operationId": "enRouteJob",
+        "summary": "Engineer is en route",
+        "tags": ["Transitions"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TransitionBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/JobResponse" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/jobs/{id}/on-site": {
+      "post": {
+        "operationId": "onSiteJob",
+        "summary": "Engineer arrived on site",
+        "tags": ["Transitions"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  { "$ref": "#/components/schemas/TransitionBody" },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "lat": { "type": "number" },
+                      "lng": { "type": "number" }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/JobResponse" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/jobs/{id}/check-in": {
+      "post": {
+        "operationId": "checkInJob",
+        "summary": "Engineer checked in at site",
+        "tags": ["Transitions"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TransitionBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/JobResponse" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/jobs/{id}/grant-access": {
+      "post": {
+        "operationId": "grantAccess",
+        "summary": "Grant access to site (waiting for access)",
+        "tags": ["Transitions"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TransitionBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/JobResponse" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/jobs/{id}/equipment-received": {
+      "post": {
+        "operationId": "equipmentReceived",
+        "summary": "Equipment received (waiting for equipment)",
+        "tags": ["Transitions"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TransitionBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/JobResponse" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/jobs/{id}/start-work": {
+      "post": {
+        "operationId": "startWork",
+        "summary": "Start work on the job",
+        "tags": ["Transitions"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TransitionBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/JobResponse" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/jobs/{id}/hold": {
+      "post": {
+        "operationId": "holdJob",
+        "summary": "Put job on hold",
+        "tags": ["Transitions"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["notes"],
+                "properties": {
+                  "notes": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/JobResponse" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/jobs/{id}/resume": {
+      "post": {
+        "operationId": "resumeJob",
+        "summary": "Resume work from hold",
+        "tags": ["Transitions"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TransitionBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/JobResponse" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/jobs/{id}/complete": {
+      "post": {
+        "operationId": "completeJob",
+        "summary": "Mark job as completed",
+        "tags": ["Transitions"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "notes": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/JobResponse" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/jobs/{id}/fail": {
+      "post": {
+        "operationId": "failJob",
+        "summary": "Mark job as failed",
+        "tags": ["Transitions"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["notes"],
+                "properties": {
+                  "notes": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/JobResponse" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/jobs/{id}/cancel": {
+      "post": {
+        "operationId": "cancelJob",
+        "summary": "Cancel a job",
+        "tags": ["Transitions"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["notes"],
+                "properties": {
+                  "notes": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/JobResponse" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/jobs/{id}/defer": {
+      "post": {
+        "operationId": "deferJob",
+        "summary": "Defer a job",
+        "tags": ["Transitions"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["notes"],
+                "properties": {
+                  "notes": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/JobResponse" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/jobs/{id}/updates": {
+      "get": {
+        "operationId": "listJobUpdates",
+        "summary": "List job update history",
+        "tags": ["Jobs"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job updates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "updates": { "type": "array", "items": { "$ref": "#/components/schemas/JobUpdate" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "addJobUpdate",
+        "summary": "Add a job update",
+        "tags": ["Jobs"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["status"],
+                "properties": {
+                  "status": { "type": "string" },
+                  "engineerId": { "type": "integer" },
+                  "notes": { "type": "string" },
+                  "lat": { "type": "number" },
+                  "lng": { "type": "number" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Update added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "update": { "$ref": "#/components/schemas/JobUpdate" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/jobs/{id}/attachments": {
+      "get": {
+        "operationId": "listAttachments",
+        "summary": "List job attachments",
+        "tags": ["Jobs"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job attachments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "attachments": { "type": "array", "items": { "$ref": "#/components/schemas/Attachment" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "addAttachment",
+        "summary": "Add an attachment to a job",
+        "tags": ["Jobs"],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["fileName", "fileType", "fileSize"],
+                "properties": {
+                  "fileName": { "type": "string" },
+                  "fileType": { "type": "string" },
+                  "fileSize": { "type": "integer" },
+                  "engineerId": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Attachment added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "attachment": { "$ref": "#/components/schemas/Attachment" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/engineers": {
+      "get": {
+        "operationId": "listEngineers",
+        "summary": "List engineers",
+        "tags": ["Engineers"],
+        "parameters": [
+          { "name": "skill", "in": "query", "schema": { "$ref": "#/components/schemas/EngineerSkill" } },
+          { "name": "status", "in": "query", "schema": { "$ref": "#/components/schemas/EngineerStatus" } },
+          { "name": "available", "in": "query", "schema": { "type": "string", "enum": ["true"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Engineer list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "engineers": { "type": "array", "items": { "$ref": "#/components/schemas/Engineer" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createEngineer",
+        "summary": "Create a new engineer",
+        "tags": ["Engineers"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateEngineerInput" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Engineer created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "engineer": { "$ref": "#/components/schemas/Engineer" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/engineers/{id}": {
+      "get": {
+        "operationId": "getEngineer",
+        "summary": "Get engineer with active job",
+        "tags": ["Engineers"],
+        "parameters": [
+          { "$ref": "#/components/parameters/EngineerId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Engineer with relations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "engineer": { "$ref": "#/components/schemas/EngineerWithRelations" }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "operationId": "updateEngineer",
+        "summary": "Update engineer fields",
+        "tags": ["Engineers"],
+        "parameters": [
+          { "$ref": "#/components/parameters/EngineerId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateEngineerInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Engineer updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "engineer": { "$ref": "#/components/schemas/Engineer" }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/engineers/{id}/history": {
+      "get": {
+        "operationId": "getEngineerHistory",
+        "summary": "Past jobs for an engineer",
+        "tags": ["Engineers"],
+        "parameters": [
+          { "$ref": "#/components/parameters/EngineerId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Engineer job history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "history": { "type": "array", "items": { "$ref": "#/components/schemas/Job" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sites": {
+      "get": {
+        "operationId": "listSites",
+        "summary": "List all sites",
+        "tags": ["Sites"],
+        "responses": {
+          "200": {
+            "description": "Site list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sites": { "type": "array", "items": { "$ref": "#/components/schemas/Site" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSite",
+        "summary": "Create a new site",
+        "tags": ["Sites"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateSiteInput" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Site created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "site": { "$ref": "#/components/schemas/Site" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/sites/{id}": {
+      "get": {
+        "operationId": "getSite",
+        "summary": "Get site by ID",
+        "tags": ["Sites"],
+        "parameters": [
+          { "$ref": "#/components/parameters/SiteId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Site details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "site": { "$ref": "#/components/schemas/Site" }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/dashboard/stats": {
+      "get": {
+        "operationId": "getDashboardStats",
+        "summary": "Aggregate dashboard statistics",
+        "tags": ["Dashboard"],
+        "responses": {
+          "200": {
+            "description": "Dashboard stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "stats": { "$ref": "#/components/schemas/DashboardStats" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dashboard/overdue": {
+      "get": {
+        "operationId": "getOverdueJobs",
+        "summary": "Jobs with SLA breaches",
+        "tags": ["Dashboard"],
+        "responses": {
+          "200": {
+            "description": "Overdue jobs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jobs": { "type": "array", "items": { "$ref": "#/components/schemas/Job" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/seed": {
+      "post": {
+        "operationId": "seedData",
+        "summary": "Seed demo data (20 jobs, 10 engineers, 5 sites)",
+        "tags": ["System"],
+        "responses": {
+          "200": {
+            "description": "Data seeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reset": {
+      "post": {
+        "operationId": "resetData",
+        "summary": "Clear all data",
+        "tags": ["System"],
+        "responses": {
+          "200": {
+            "description": "Data cleared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "healthCheck",
+        "summary": "Health check",
+        "tags": ["System"],
+        "responses": {
+          "200": {
+            "description": "Service healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "service": { "type": "string" },
+                    "timestamp": { "type": "string", "format": "date-time" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "parameters": {
+      "JobId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "integer" }
+      },
+      "EngineerId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "integer" }
+      },
+      "SiteId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "integer" }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "Conflict (invalid transition, duplicate, engineer unavailable)",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+          }
+        }
+      },
+      "JobResponse": {
+        "description": "Job after transition",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "job": { "$ref": "#/components/schemas/Job" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "JobStatus": {
+        "type": "string",
+        "enum": [
+          "created", "scheduled", "assigned", "engineer-dispatched",
+          "en-route", "on-site", "checking-in", "waiting-for-access",
+          "waiting-for-equipment", "in-progress", "on-hold",
+          "completed", "failed", "cancelled", "deferred",
+          "facility-not-accessible", "parts-required", "requires-rescheduling"
+        ]
+      },
+      "Priority": {
+        "type": "string",
+        "enum": ["critical", "high", "medium", "low"]
+      },
+      "EngineerSkill": {
+        "type": "string",
+        "enum": ["electrical", "plumbing", "hvac", "fire-safety", "general-maintenance"]
+      },
+      "EngineerStatus": {
+        "type": "string",
+        "enum": ["available", "busy", "on-leave"]
+      },
+      "Job": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "title": { "type": "string" },
+          "description": { "type": "string", "nullable": true },
+          "siteId": { "type": "integer" },
+          "skillRequired": { "type": "string" },
+          "priority": { "$ref": "#/components/schemas/Priority" },
+          "status": { "$ref": "#/components/schemas/JobStatus" },
+          "assignedEngineerId": { "type": "integer", "nullable": true },
+          "scheduledDate": { "type": "string", "nullable": true },
+          "estimatedDuration": { "type": "integer", "nullable": true },
+          "slaDeadline": { "type": "string", "nullable": true },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      },
+      "JobWithRelations": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Job" },
+          {
+            "type": "object",
+            "properties": {
+              "site": { "$ref": "#/components/schemas/Site" },
+              "engineer": { "$ref": "#/components/schemas/Engineer" },
+              "updates": { "type": "array", "items": { "$ref": "#/components/schemas/JobUpdate" } },
+              "attachments": { "type": "array", "items": { "$ref": "#/components/schemas/Attachment" } }
+            }
+          }
+        ]
+      },
+      "CreateJobInput": {
+        "type": "object",
+        "required": ["title", "siteId", "skillRequired"],
+        "properties": {
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "siteId": { "type": "integer" },
+          "skillRequired": { "type": "string" },
+          "priority": { "$ref": "#/components/schemas/Priority" },
+          "scheduledDate": { "type": "string" },
+          "estimatedDuration": { "type": "integer" },
+          "slaDeadline": { "type": "string" }
+        }
+      },
+      "UpdateJobInput": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "priority": { "$ref": "#/components/schemas/Priority" },
+          "scheduledDate": { "type": "string" },
+          "estimatedDuration": { "type": "integer" },
+          "slaDeadline": { "type": "string" },
+          "siteId": { "type": "integer" },
+          "skillRequired": { "type": "string" }
+        }
+      },
+      "TransitionBody": {
+        "type": "object",
+        "properties": {
+          "notes": { "type": "string" },
+          "lat": { "type": "number" },
+          "lng": { "type": "number" },
+          "engineerId": { "type": "integer" }
+        }
+      },
+      "Engineer": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "firstName": { "type": "string" },
+          "lastName": { "type": "string" },
+          "email": { "type": "string" },
+          "phone": { "type": "string", "nullable": true },
+          "employeeId": { "type": "string" },
+          "skills": { "type": "array", "items": { "type": "string" } },
+          "status": { "$ref": "#/components/schemas/EngineerStatus" },
+          "currentLat": { "type": "number", "nullable": true },
+          "currentLng": { "type": "number", "nullable": true },
+          "createdAt": { "type": "string" }
+        }
+      },
+      "EngineerWithRelations": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Engineer" },
+          {
+            "type": "object",
+            "properties": {
+              "activeJob": { "$ref": "#/components/schemas/Job" }
+            }
+          }
+        ]
+      },
+      "CreateEngineerInput": {
+        "type": "object",
+        "required": ["firstName", "lastName", "email", "employeeId"],
+        "properties": {
+          "firstName": { "type": "string" },
+          "lastName": { "type": "string" },
+          "email": { "type": "string" },
+          "phone": { "type": "string" },
+          "employeeId": { "type": "string" },
+          "skills": { "type": "array", "items": { "$ref": "#/components/schemas/EngineerSkill" } }
+        }
+      },
+      "UpdateEngineerInput": {
+        "type": "object",
+        "properties": {
+          "firstName": { "type": "string" },
+          "lastName": { "type": "string" },
+          "email": { "type": "string" },
+          "status": { "$ref": "#/components/schemas/EngineerStatus" },
+          "skills": { "type": "array", "items": { "$ref": "#/components/schemas/EngineerSkill" } }
+        }
+      },
+      "Site": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "address": { "type": "string" },
+          "city": { "type": "string" },
+          "postcode": { "type": "string" },
+          "lat": { "type": "number", "nullable": true },
+          "lng": { "type": "number", "nullable": true },
+          "accessInstructions": { "type": "string", "nullable": true },
+          "contactName": { "type": "string", "nullable": true },
+          "contactPhone": { "type": "string", "nullable": true },
+          "createdAt": { "type": "string" }
+        }
+      },
+      "CreateSiteInput": {
+        "type": "object",
+        "required": ["name", "address", "city", "postcode"],
+        "properties": {
+          "name": { "type": "string" },
+          "address": { "type": "string" },
+          "city": { "type": "string" },
+          "postcode": { "type": "string" },
+          "lat": { "type": "number" },
+          "lng": { "type": "number" },
+          "accessInstructions": { "type": "string" },
+          "contactName": { "type": "string" },
+          "contactPhone": { "type": "string" }
+        }
+      },
+      "JobUpdate": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "jobId": { "type": "integer" },
+          "engineerId": { "type": "integer", "nullable": true },
+          "fromStatus": { "type": "string", "nullable": true },
+          "toStatus": { "type": "string" },
+          "notes": { "type": "string", "nullable": true },
+          "lat": { "type": "number", "nullable": true },
+          "lng": { "type": "number", "nullable": true },
+          "createdAt": { "type": "string" }
+        }
+      },
+      "Attachment": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "jobId": { "type": "integer" },
+          "engineerId": { "type": "integer", "nullable": true },
+          "fileName": { "type": "string" },
+          "fileType": { "type": "string" },
+          "fileSize": { "type": "integer" },
+          "createdAt": { "type": "string" }
+        }
+      },
+      "DashboardStats": {
+        "type": "object",
+        "properties": {
+          "totalJobs": { "type": "integer" },
+          "byStatus": {
+            "type": "object",
+            "properties": {
+              "created": { "type": "integer" },
+              "scheduled": { "type": "integer" },
+              "assigned": { "type": "integer" },
+              "engineer-dispatched": { "type": "integer" },
+              "en-route": { "type": "integer" },
+              "on-site": { "type": "integer" },
+              "checking-in": { "type": "integer" },
+              "waiting-for-access": { "type": "integer" },
+              "waiting-for-equipment": { "type": "integer" },
+              "in-progress": { "type": "integer" },
+              "on-hold": { "type": "integer" },
+              "completed": { "type": "integer" },
+              "failed": { "type": "integer" },
+              "cancelled": { "type": "integer" },
+              "deferred": { "type": "integer" },
+              "facility-not-accessible": { "type": "integer" },
+              "parts-required": { "type": "integer" },
+              "requires-rescheduling": { "type": "integer" }
+            }
+          },
+          "byPriority": {
+            "type": "object",
+            "properties": {
+              "critical": { "type": "integer" },
+              "high": { "type": "integer" },
+              "medium": { "type": "integer" },
+              "low": { "type": "integer" }
+            }
+          },
+          "engineerUtilisation": {
+            "type": "object",
+            "properties": {
+              "total": { "type": "integer" },
+              "available": { "type": "integer" },
+              "busy": { "type": "integer" },
+              "onLeave": { "type": "integer" }
+            }
+          },
+          "slaBreaches": { "type": "integer" },
+          "avgCompletionTime": { "type": "number", "nullable": true, "description": "Average completion time in minutes" }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

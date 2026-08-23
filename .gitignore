@@ -72,3 +72,13 @@ venv/
 # Build artifacts
 artifacts/api-server/logs/
 artifacts/e2e-tests/coverage/
+
+# FieldServe runtime data
+artifacts/api-server/data/
+artifacts/api-server/data.sqlite
+artifacts/api-server/env-vars
+artifacts/testradius/env-vars
+
+# Tool session files
+.opencode-session.md
+.claude/

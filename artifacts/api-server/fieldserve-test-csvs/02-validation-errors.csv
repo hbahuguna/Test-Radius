@@ -1,0 +1,13 @@
+name,method,path,headers,body,expected_status,expected_json_path,expected_value,expected_operator,extract_as
+POST jobs with empty body,POST,/jobs,{"Content-Type":"application/json"},{},400,$.error,exists,exists,
+POST jobs missing title,POST,/jobs,{"Content-Type":"application/json"},{"siteId":1,"skillRequired":"electrical"},400,$.error,exists,exists,
+POST jobs invalid priority,POST,/jobs,{"Content-Type":"application/json"},{"title":"Test Job","siteId":1,"skillRequired":"electrical","priority":"urgent"},400,$.error,exists,exists,
+POST jobs non-existent site,POST,/jobs,{"Content-Type":"application/json"},{"title":"Test Job","siteId":999,"skillRequired":"electrical"},400,$.error,exists,exists,
+GET job not found,GET,/jobs/99999,{},,404,$.error,exists,exists,
+GET engineer not found,GET,/engineers/99999,{},,404,$.error,exists,exists,
+GET site not found,GET,/sites/99999,{},,404,$.error,exists,exists,
+POST engineer missing fields,POST,/engineers,{"Content-Type":"application/json"},{"firstName":"Test"},400,$.error,exists,exists,
+POST engineer duplicate email,POST,/engineers,{"Content-Type":"application/json"},{"firstName":"Duplicate","lastName":"User","email":"ahmed.hassan@fieldserve.co.uk","employeeId":"DUP-001"},409,$.error,exists,exists,
+POST site missing fields,POST,/sites,{"Content-Type":"application/json"},{"name":"Incomplete Site"},400,$.error,exists,exists,
+POST job update missing status,POST,/jobs/999/updates,{"Content-Type":"application/json"},{"notes":"test"},400,$.error,exists,exists,
+DELETE in-progress job,DELETE,/jobs/5,{},,409,$.error,exists,exists,

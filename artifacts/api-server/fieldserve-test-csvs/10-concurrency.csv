@@ -1,0 +1,6 @@
+name,method,path,headers,body,expected_status,expected_json_path,expected_value,expected_operator,extract_as
+concurrency_seed,POST,/seed,{},{},200,$.message,seeded,contains,
+concurrency_first_assign,POST,/jobs/1/assign,{},{"engineerId":1},200,$.job.status,assigned,equals,
+concurrency_double_assign,POST,/jobs/1/assign,{},{"engineerId":1},409,$.error,conflict,contains,
+concurrency_cancel,POST,/jobs/1/cancel,{},{"notes":"Cancel"},200,$.job.status,cancelled,equals,
+concurrency_double_cancel,POST,/jobs/1/cancel,{},{"notes":"Cancel again"},409,$.error,conflict,contains,

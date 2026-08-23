@@ -29,6 +29,7 @@ import {
 } from "@/lib/queryfirst-api";
 import { SuitesPanel } from "@/components/queryfirst/SuitesPanel";
 import { TrainsPanel } from "@/components/queryfirst/TrainsPanel";
+import { ApiTestsPanel } from "@/components/queryfirst/ApiTestsPanel";
 import { SuiteRunsReport } from "@/components/queryfirst/reports/SuiteRunsReport";
 import { TrainRunsReport } from "@/components/queryfirst/reports/TrainRunsReport";
 import { toast } from "sonner";
@@ -534,7 +535,7 @@ const handleDeleteStep = async (testId: number, stepId: number) => {
     }
   };
 
-  const [activeTab, setActiveTab] = useState<"tests" | "suites" | "trains" | "reports">("tests");
+  const [activeTab, setActiveTab] = useState<"ui-tests" | "api-tests" | "suites" | "trains" | "reports">("ui-tests");
   const [reportTab, setReportTab] = useState<"suite-runs" | "train-runs">("suite-runs");
   const running = mode !== "idle";
   const isRecording = mode === "recording";
@@ -599,22 +600,30 @@ const actionBadgeClass = (action: string) => {
 
         {/* Tabs */}
         <div className="flex items-center gap-1 border-b border-zinc-800 pb-px">
-          {(["tests", "suites", "trains", "reports"] as const).map((tab) => (
+          {(
+            [
+              { id: "ui-tests" as const, label: "UI Tests" },
+              { id: "api-tests" as const, label: "API Tests" },
+              { id: "suites" as const, label: "Suites" },
+              { id: "trains" as const, label: "Trains" },
+              { id: "reports" as const, label: "Reports" },
+            ] as const
+          ).map((tab) => (
             <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-3 py-2 text-sm font-medium capitalize transition-colors border-b-2 -mb-px ${
-                activeTab === tab
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-3 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                activeTab === tab.id
                   ? "border-primary text-foreground"
                   : "border-transparent text-muted-foreground hover:text-foreground"
               }`}
             >
-              {tab}
+              {tab.label}
             </button>
           ))}
         </div>
 
-        {activeTab === "tests" && (
+        {activeTab === "ui-tests" && (
         <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr_360px] gap-4">
           {/* LEFT: Controls */}
           <div className="space-y-4">
@@ -988,6 +997,9 @@ const actionBadgeClass = (action: string) => {
         </div>
         <div className={activeTab === "trains" ? "" : "hidden"}>
           <TrainsPanel />
+        </div>
+        <div className={activeTab === "api-tests" ? "" : "hidden"}>
+          <ApiTestsPanel />
         </div>
 
         {activeTab === "reports" && (

@@ -168,5 +168,15 @@ function StepDetail({ detail }: { detail: QfRunStepDetail["detail"] }) {
   if (typeof selector === "string") {
     return <p className="text-xs text-muted-foreground font-mono truncate">{selector}</p>;
   }
+  if (typeof detail.method === "string" && typeof detail.path === "string") {
+    const parts = [detail.method, detail.path];
+    if (typeof detail.status === "number" && typeof detail.expected === "number") {
+      parts.push(`→ ${detail.status} (expected ${detail.expected})`);
+    }
+    if (typeof detail.duration === "number") {
+      parts.push(`[${detail.duration}ms]`);
+    }
+    return <p className="text-xs text-muted-foreground font-mono truncate">{parts.join(" ")}</p>;
+  }
   return null;
 }

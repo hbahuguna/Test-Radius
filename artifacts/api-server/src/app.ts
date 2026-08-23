@@ -5,6 +5,7 @@ import fs from "fs";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { recordingMiddleware } from "./lib/fieldserve-recorder";
 
 const app: Express = express();
 
@@ -34,6 +35,10 @@ app.use(express.urlencoded({ extended: true }));
 // Stripe webhook needs the raw request body for signature verification.
 app.use("/api/billing/webhook", express.raw({ type: "application/json" }));
 
+// Recording middleware must run BEFORE the router so it can wrap `res.send`
+// before route handlers emit the response. Scoped to /api/fieldserve so only
+// FieldServe traffic (not auth/billing/etc.) is captured.
+app.use("/api/fieldserve", recordingMiddleware);
 app.use("/api", router);
 
 // In production, serve the built SPA so the API and frontend share one origin.

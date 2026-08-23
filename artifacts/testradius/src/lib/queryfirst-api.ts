@@ -63,6 +63,8 @@ export interface QfRun {
 
 export type QfMode = "sequential" | "parallel" | "mixed";
 
+export type QfSuiteType = "ui" | "api";
+
 export interface QfSuiteTest {
   suiteTestId: number;
   testId: number;
@@ -71,14 +73,22 @@ export interface QfSuiteTest {
   name: string;
 }
 
+export interface QfSuiteApiSession {
+  suiteApiSessionId: number;
+  sessionId: number;
+  position: number;
+}
+
 export interface QfSuite {
   id: number;
   name: string;
   description: string | null;
   mode: QfMode;
+  type: QfSuiteType;
   createdAt: string;
   updatedAt: string;
   tests: QfSuiteTest[];
+  apiSessions: QfSuiteApiSession[];
 }
 
 export interface QfTrainSuite {
@@ -396,8 +406,9 @@ export function startBrowse(
 
 // ----- suites & trains -------------------------------------------------------
 
-export async function listSuites(): Promise<{ suites: QfSuite[] }> {
-  return authedFetch<{ suites: QfSuite[] }>("/suites");
+export async function listSuites(type?: QfSuiteType): Promise<{ suites: QfSuite[] }> {
+  const qs = type ? `?type=${type}` : "";
+  return authedFetch<{ suites: QfSuite[] }>(`/suites${qs}`);
 }
 
 export interface QfSuiteMember {
@@ -405,13 +416,21 @@ export interface QfSuiteMember {
   parallel?: boolean;
 }
 
+export interface QfSuiteApiMember {
+  sessionId: number;
+}
+
 export interface QfTrainMember {
   suiteId: number;
   parallel?: boolean;
 }
 
-export async function createSuite(request: { name: string; description?: string; mode?: QfMode; tests?: QfSuiteMember[] }): Promise<{ suite: QfSuite }> {
+export async function createSuite(request: { name: string; description?: string; mode?: QfMode; type?: QfSuiteType; tests?: QfSuiteMember[]; apiSessionIds?: number[] }): Promise<{ suite: QfSuite }> {
   return authedFetch<{ suite: QfSuite }>("/suites", { method: "POST", body: JSON.stringify(request) });
+}
+
+export async function updateSuiteApiSessions(suiteId: number, apiSessionIds: number[]): Promise<{ suite: QfSuite }> {
+  return authedFetch<{ suite: QfSuite }>(`/suites/${suiteId}/api-sessions`, { method: "PUT", body: JSON.stringify({ apiSessionIds }) });
 }
 
 export async function deleteSuite(id: number): Promise<{ ok: boolean }> {

@@ -1,0 +1,11 @@
+name,method,path,headers,body,expected_status,expected_json_path,expected_value,expected_operator,extract_as
+filter_status_completed,GET,/jobs?status=completed,{},{},200,$.data[0].status,completed,equals,
+filter_status_in_progress,GET,/jobs?status=in-progress,{},{},200,$.data[0].status,in-progress,equals,
+filter_priority_critical,GET,/jobs?priority=critical,{},{},200,$.data[0].priority,critical,equals,
+filter_engineer_id,GET,/jobs?engineer_id=1,{},{},200,$.data[0].engineer_id,1,equals,
+filter_site_id,GET,/jobs?site_id=1,{},{},200,$.data[0].site_id,1,equals,
+filter_status_created_pagination,GET,/jobs?status=created&page=0&limit=2,{},{},200,$.data.length,2,lte,
+filter_sort_priority_asc,GET,/jobs?sort=priority&order=asc,{},{},200,$.data,not_null,exists,
+filter_engineers_skill,GET,/engineers?skill=electrical,{},{},200,$.data[0].skills,electrical,contains,
+filter_engineers_available,GET,/engineers?status=available,{},{},200,$.data[0].status,available,equals,
+filter_engineers_available_flag,GET,/engineers?available=true,{},{},200,$.data[0].available,true,equals,

@@ -1,0 +1,12 @@
+name,method,path,headers,body,expected_status,expected_json_path,expected_value,expected_operator,extract_as
+seed_data,POST,/seed,{},{},200,$.message,seeded,contains,
+dashboard_stats_exists,GET,/dashboard/stats,{},{},200,$.stats.totalJobs,not_null,exists,
+dashboard_stats_sla_breach,GET,/dashboard/stats,{},{},200,$.stats.slaBreaches,not_null,exists,
+dashboard_stats_utilisation,GET,/dashboard/stats,{},{},200,$.stats.engineerUtilisation,not_null,exists,
+dashboard_overdue,GET,/dashboard/overdue,{},{},200,$.jobs,not_null,exists,
+create_overdue_job,POST,/jobs,{},{"title":"Overdue Test","siteId":1,"skillRequired":"electrical","slaDeadline":"2020-01-01T00:00:00Z"},201,$.job.id,not_null,exists,
+dashboard_overdue_includes_new,GET,/dashboard/overdue,{},{},200,$.jobs.length,1,gte,
+hold_in_progress_job,POST,/jobs/13/hold,{},{"notes":"Boiler valve needed"},200,$.job.status,on-hold,equals,
+resume_on_hold_job,POST,/jobs/13/resume,{},{},200,$.job.status,in-progress,equals,
+get_job_after_resume,GET,/jobs/13,{},{},200,$.job.status,in-progress,equals,
+reset_data,POST,/reset,{},{},200,$.message,reset,contains,

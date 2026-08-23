@@ -22,9 +22,11 @@ import type {
   Slot,
   Step,
   Suite,
+  SuiteApiSession,
   SuiteRun,
   SuiteRunWithRuns,
   SuiteTest,
+  SuiteWithApiSessions,
   SuiteWithTests,
   Test,
   TestSource,
@@ -143,6 +145,7 @@ interface SuiteRow {
   name: string;
   description: string | null;
   mode: string;
+  type: string;
   created_at: string;
   updated_at: string;
 }
@@ -153,6 +156,13 @@ interface SuiteTestRow {
   test_id: number;
   position: number;
   parallel: number;
+}
+
+interface SuiteApiSessionRow {
+  id: number;
+  suite_id: number;
+  session_id: number;
+  position: number;
 }
 
 interface TrainRow {
@@ -775,13 +785,14 @@ export class DataStore {
     const timestamp = now();
     const result = this.db
       .prepare(
-        `INSERT INTO suites (name, description, mode, created_at, updated_at)
-         VALUES (@name, @description, @mode, @createdAt, @updatedAt)`,
+        `INSERT INTO suites (name, description, mode, type, created_at, updated_at)
+         VALUES (@name, @description, @mode, @type, @createdAt, @updatedAt)`,
       )
       .run({
         name: input.name,
         description: input.description ?? null,
         mode: input.mode ?? "sequential",
+        type: input.type ?? "ui",
         createdAt: timestamp,
         updatedAt: timestamp,
       });
@@ -799,8 +810,10 @@ export class DataStore {
     return { ...suite, tests: this.listSuiteTestsBySuite(id) };
   }
 
-  listSuites(): Suite[] {
-    const rows = this.db.prepare(`SELECT * FROM suites ORDER BY id`).all() as SuiteRow[];
+  listSuites(type?: string): Suite[] {
+    const rows = type
+      ? (this.db.prepare(`SELECT * FROM suites WHERE type = ? ORDER BY id`).all(type) as SuiteRow[])
+      : (this.db.prepare(`SELECT * FROM suites ORDER BY id`).all() as SuiteRow[]);
     return rows.map(mapSuite);
   }
 
@@ -864,6 +877,32 @@ export class DataStore {
     this.db.transaction(() => {
       this.deleteSuiteTestsBySuite(suiteId);
       items.forEach((item, position) => this.addSuiteTest(suiteId, { testId: item.testId, position, parallel: item.parallel }));
+      this.db.prepare(`UPDATE suites SET updated_at = @now WHERE id = @id`).run({ now: now(), id: suiteId });
+    })();
+  }
+
+  // ----- suite API sessions (FieldServe recorded sessions) -------------------
+
+  getSuiteWithApiSessions(id: number): SuiteWithApiSessions | null {
+    const suite = this.getSuite(id);
+    if (!suite) return null;
+    return { ...suite, apiSessions: this.listSuiteApiSessions(id) };
+  }
+
+  listSuiteApiSessions(suiteId: number): SuiteApiSession[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM suite_api_sessions WHERE suite_id = ? ORDER BY position`)
+      .all(suiteId) as SuiteApiSessionRow[];
+    return rows.map(mapSuiteApiSession);
+  }
+
+  setSuiteApiSessions(suiteId: number, sessionIds: number[]): void {
+    this.db.transaction(() => {
+      this.db.prepare(`DELETE FROM suite_api_sessions WHERE suite_id = ?`).run(suiteId);
+      const stmt = this.db.prepare(
+        `INSERT INTO suite_api_sessions (suite_id, session_id, position) VALUES (?, ?, ?)`,
+      );
+      sessionIds.forEach((sid, pos) => stmt.run(suiteId, sid, pos));
       this.db.prepare(`UPDATE suites SET updated_at = @now WHERE id = @id`).run({ now: now(), id: suiteId });
     })();
   }
@@ -1190,6 +1229,7 @@ function mapSuite(row: SuiteRow): Suite {
     name: row.name,
     description: row.description,
     mode: row.mode as Suite["mode"],
+    type: (row.type as Suite["type"]) ?? "ui",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1202,6 +1242,15 @@ function mapSuiteTest(row: SuiteTestRow): SuiteTest {
     testId: row.test_id,
     position: row.position,
     parallel: row.parallel === 1,
+  };
+}
+
+function mapSuiteApiSession(row: SuiteApiSessionRow): SuiteApiSession {
+  return {
+    id: row.id,
+    suiteId: row.suite_id,
+    sessionId: row.session_id,
+    position: row.position,
   };
 }
 

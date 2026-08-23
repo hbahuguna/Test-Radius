@@ -19,10 +19,12 @@ import {
   type QfSuite,
   type QfSuiteMember,
   type QfSuiteRun,
+  type QfSuiteType,
   type QfTest,
 } from "@/lib/queryfirst-api";
+import { listRecordedSessions, type RecordedSession } from "@/lib/fieldserve-api";
 import { toast } from "sonner";
-import { Play, Plus, RefreshCw, Square, Trash2, Settings2 } from "lucide-react";
+import { Play, Plus, RefreshCw, Square, Trash2, Settings2, Monitor, Server } from "lucide-react";
 import { SuiteRunCard } from "./SuiteRunCard";
 import { BucketsEditor, MemberGroupChips, partitionMembers, type BucketItem, type BucketMember } from "./BucketsEditor";
 
@@ -48,14 +50,143 @@ function ModeBadge({ mode }: { mode: QfMode }) {
   return <Badge variant="outline" className={color}>{mode}</Badge>;
 }
 
+function SuiteCard({
+  suite,
+  runningSuite,
+  log,
+  runDetails,
+  recentRuns,
+  editingSuite,
+  editMembers,
+  savingMembers,
+  allTestItems,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
+  onEditMembersChange,
+  onRun,
+  onStop,
+  onDelete,
+}: {
+  suite: QfSuite;
+  runningSuite: number | null;
+  log: LogLine[];
+  runDetails: Record<number, QfSuiteRun>;
+  recentRuns: Record<number, RecentRun[]>;
+  editingSuite: number | null;
+  editMembers: BucketMember[];
+  savingMembers: boolean;
+  allTestItems: BucketItem[];
+  onStartEdit: (suite: QfSuite) => void;
+  onSaveEdit: (suiteId: number) => void;
+  onCancelEdit: () => void;
+  onEditMembersChange: (members: BucketMember[]) => void;
+  onRun: (suite: QfSuite) => void;
+  onStop: () => void;
+  onDelete: (suite: QfSuite) => void;
+}) {
+  const isApi = suite.type === "api";
+  return (
+    <Card>
+      <CardContent className="pt-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <span className="font-medium text-sm">{suite.name}</span>
+          <ModeBadge mode={suite.mode} />
+          {isApi ? (
+            <Badge variant="outline" className="border-amber-500/40 text-amber-400">{suite.apiSessions.length} session(s)</Badge>
+          ) : (
+            <Badge variant="outline">{suite.tests.length} test(s)</Badge>
+          )}
+          <div className="ml-auto flex items-center gap-1">
+            {!isApi && (
+              <Button size="sm" variant="ghost" className="text-xs h-7" disabled={runningSuite !== null}
+                onClick={() => onStartEdit(suite)}>
+                <Settings2 className="size-3.5" />
+              </Button>
+            )}
+            <Button size="sm" className="text-xs h-7" disabled={runningSuite !== null} onClick={() => onRun(suite)}>
+              {runningSuite === suite.id ? <RefreshCw className="size-3.5 mr-1 animate-spin" /> : <Play className="size-3.5 mr-1" />}
+              Run
+            </Button>
+            <Button size="sm" variant="ghost" className="text-xs h-7 text-muted-foreground hover:text-red-500" onClick={() => onDelete(suite)}>
+              <Trash2 className="size-3.5" />
+            </Button>
+          </div>
+        </div>
+
+        {isApi ? (
+          <div className="flex flex-wrap gap-1">
+            {suite.apiSessions.map((s) => (
+              <Badge key={s.suiteApiSessionId} variant="outline" className="text-xs border-amber-500/30 text-amber-300">
+                Session #{s.sessionId}
+              </Badge>
+            ))}
+            {suite.apiSessions.length === 0 && (
+              <p className="text-xs text-muted-foreground">No API sessions added.</p>
+            )}
+          </div>
+        ) : (
+          editingSuite === suite.id ? (
+            <div className="space-y-2">
+              <BucketsEditor
+                allItems={allTestItems}
+                members={editMembers}
+                onChange={onEditMembersChange}
+                itemNoun="test"
+              />
+              <div className="flex gap-2">
+                <Button size="sm" className="text-xs h-7" disabled={savingMembers} onClick={() => onSaveEdit(suite.id)}>
+                  {savingMembers ? "Saving…" : "Save members"}
+                </Button>
+                <Button size="sm" variant="ghost" className="text-xs h-7" onClick={onCancelEdit}>Cancel</Button>
+              </div>
+            </div>
+          ) : (
+            <MemberGroupChips
+              groups={partitionMembers(suite.tests.map((t) => ({ id: t.testId, parallel: t.parallel })))}
+              getLabel={(id) => suite.tests.find((t) => t.testId === id)?.name ?? `#${id}`}
+            />
+          )
+        )}
+
+        {runningSuite === suite.id && (
+          <div className="space-y-2">
+            <div className="border border-zinc-800 rounded-lg p-2 max-h-48 overflow-y-auto space-y-0.5">
+              {log.map((l, i) => (
+                <div key={i} className={`text-xs ${l.status === "failed" ? "text-red-400" : l.status === "passed" ? "text-green-400" : "text-muted-foreground"}`}>
+                  {l.status === "failed" ? "\u2717" : l.status === "passed" ? "\u2713" : "\u2022"} {l.label}
+                </div>
+              ))}
+            </div>
+            <Button variant="destructive" size="sm" className="text-xs h-7" onClick={onStop}>
+              <Square className="size-3 mr-1" /> Stop
+            </Button>
+          </div>
+        )}
+
+        {runDetails[suite.id] && <SuiteRunCard suiteRun={runDetails[suite.id]} title={`Latest suite run #${runDetails[suite.id].id}`} />}
+
+        {recentRuns[suite.id] && recentRuns[suite.id].length > 1 && (
+          <p className="text-[11px] text-muted-foreground">
+            {recentRuns[suite.id].length} run(s) total — latest shown above.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function SuitesPanel() {
   const [suites, setSuites] = useState<QfSuite[]>([]);
   const [tests, setTests] = useState<QfTest[]>([]);
+  const [apiSessions, setApiSessions] = useState<RecordedSession[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [showCreate, setShowCreate] = useState(false);
+  const [createType, setCreateType] = useState<QfSuiteType>("ui");
   const [name, setName] = useState("");
   const [members, setMembers] = useState<BucketMember[]>([]);
+  const [selectedSessionIds, setSelectedSessionIds] = useState<number[]>([]);
   const [creating, setCreating] = useState(false);
 
   const [editingSuite, setEditingSuite] = useState<number | null>(null);
@@ -68,20 +199,23 @@ export function SuitesPanel() {
   const [recentRuns, setRecentRuns] = useState<Record<number, RecentRun[]>>({});
   const abortRef = useRef<AbortController | null>(null);
 
+  const refreshRef = useRef(0);
   const refresh = useCallback(async () => {
-    try {
-      const [s, t] = await Promise.all([listSuites(), listTests()]);
-      setSuites(s.suites);
-      setTests(t.tests);
-    } catch {
-      /* keep stale data */
-    }
+    const seq = ++refreshRef.current;
+    const [s, t, api] = await Promise.allSettled([listSuites(), listTests(), listRecordedSessions()]);
+    if (seq !== refreshRef.current) return;
+    if (s.status === "fulfilled") setSuites(s.value.suites);
+    if (t.status === "fulfilled") setTests(t.value.tests);
+    if (api.status === "fulfilled") setApiSessions(api.value.sessions);
   }, []);
 
   useEffect(() => {
     refresh().finally(() => setLoading(false));
     return () => { abortRef.current?.abort(); };
   }, [refresh]);
+
+  const uiSuites = suites.filter((s) => s.type === "ui");
+  const apiSuites = suites.filter((s) => s.type === "api");
 
   const allTestItems: BucketItem[] = tests.map((t) => ({
     id: t.id,
@@ -93,11 +227,17 @@ export function SuitesPanel() {
     if (!name.trim()) return;
     setCreating(true);
     try {
-      const suiteMembers: QfSuiteMember[] = members.map((m) => ({ testId: m.id, parallel: m.parallel }));
-      const { suite } = await createSuite({ name: name.trim(), tests: suiteMembers });
-      toast.success(`Suite "${suite.name}" created`);
+      if (createType === "api") {
+        const { suite } = await createSuite({ name: name.trim(), type: "api", apiSessionIds: selectedSessionIds });
+        toast.success(`API Suite "${suite.name}" created`);
+      } else {
+        const suiteMembers: QfSuiteMember[] = members.map((m) => ({ testId: m.id, parallel: m.parallel }));
+        const { suite } = await createSuite({ name: name.trim(), tests: suiteMembers });
+        toast.success(`Suite "${suite.name}" created`);
+      }
       setName("");
       setMembers([]);
+      setSelectedSessionIds([]);
       setShowCreate(false);
       await refresh();
     } catch (err) {
@@ -186,27 +326,130 @@ export function SuitesPanel() {
     }
   };
 
+  const openCreate = (type: QfSuiteType) => {
+    setCreateType(type);
+    setShowCreate(true);
+    refresh();
+  };
+
+  const toggleSession = (id: number) => {
+    setSelectedSessionIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  };
+
+  const cardProps = {
+    runningSuite,
+    log,
+    runDetails,
+    recentRuns,
+    editingSuite,
+    editMembers,
+    savingMembers,
+    allTestItems,
+    onStartEdit: handleStartEdit,
+    onSaveEdit: handleSaveEdit,
+    onCancelEdit: () => setEditingSuite(null),
+    onEditMembersChange: setEditMembers,
+    onRun: handleRun,
+    onStop: handleStop,
+    onDelete: handleDelete,
+  };
+
   return (
     <div className="space-y-4">
+      {/* ---------- UI Test Suites ---------- */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
-            Suites
-            <span className="text-muted-foreground font-normal">(sequence of steps; group 2+ tests to run in parallel)</span>
-            <Button variant="ghost" size="sm" onClick={() => setShowCreate((v) => !v)} className="ml-auto text-xs h-6">
+            <Monitor className="size-4 text-blue-400" />
+            UI Test Suites
+            <span className="text-muted-foreground font-normal">(browser-based test recordings)</span>
+            <Button variant="ghost" size="sm" onClick={() => openCreate("ui")} className="ml-auto text-xs h-6">
               <Plus className="size-3.5 mr-1" /> New suite
             </Button>
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {showCreate && (
-            <div className="space-y-3 border border-zinc-800 rounded-lg p-3 mb-3">
-              <div>
-                <Label className="text-xs">Name</Label>
-                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Signup flows" className="text-sm" />
+          {loading ? (
+            <p className="text-xs text-muted-foreground">Loading…</p>
+          ) : uiSuites.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No UI suites yet. Create one to group browser tests into a runnable batch.</p>
+          ) : (
+            <div className="space-y-3">
+              {uiSuites.map((suite) => (
+                <SuiteCard key={suite.id} suite={suite} {...cardProps} />
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ---------- API Test Suites ---------- */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Server className="size-4 text-amber-400" />
+            API Test Suites
+            <span className="text-muted-foreground font-normal">(recorded HTTP API sessions)</span>
+            <Button variant="ghost" size="sm" onClick={() => openCreate("api")} className="ml-auto text-xs h-6">
+              <Plus className="size-3.5 mr-1" /> New suite
+            </Button>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <p className="text-xs text-muted-foreground">Loading…</p>
+          ) : apiSuites.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No API suites yet. Create one to group API recordings into a runnable batch.</p>
+          ) : (
+            <div className="space-y-3">
+              {apiSuites.map((suite) => (
+                <SuiteCard key={suite.id} suite={suite} {...cardProps} />
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ---------- Shared create dialog ---------- */}
+      {showCreate && (
+        <Card>
+          <CardContent className="pt-4 space-y-3">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm font-medium">
+                Create {createType === "api" ? "API" : "UI"} Suite
+              </span>
+              <Button variant="ghost" size="sm" className="text-xs h-6 ml-auto" onClick={() => setShowCreate(false)}>Cancel</Button>
+            </div>
+            <div>
+              <Label className="text-xs">Name</Label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={createType === "api" ? "e.g. FieldServe CRUD" : "e.g. Signup flows"} className="text-sm" />
+            </div>
+
+            {createType === "api" ? (
+              <div className="space-y-2">
+                {apiSessions.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No API recordings yet — record one in the API Tests tab first.</p>
+                ) : (
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    <Label className="text-xs">Select recorded sessions</Label>
+                    {apiSessions.map((s) => (
+                      <label key={s.id} className="flex items-center gap-2 text-xs p-1.5 rounded hover:bg-zinc-800/50 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedSessionIds.includes(s.id)}
+                          onChange={() => toggleSession(s.id)}
+                          className="rounded"
+                        />
+                        <span className="font-medium">{s.name}</span>
+                        <span className="text-muted-foreground">#{s.id} · {s.stepCount} step(s)</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
-              {tests.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No tests yet — record one in the Tests tab first.</p>
+            ) : (
+              tests.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No tests yet — record one in the UI Tests tab first.</p>
               ) : (
                 <BucketsEditor
                   allItems={allTestItems}
@@ -214,95 +457,17 @@ export function SuitesPanel() {
                   onChange={setMembers}
                   itemNoun="test"
                 />
-              )}
-              <div className="flex gap-2">
-                <Button onClick={handleCreate} disabled={creating || !name.trim()} className="text-xs h-8">
-                  {creating ? "Creating…" : "Create suite"}
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => setShowCreate(false)} className="text-xs h-8">Cancel</Button>
-              </div>
+              )
+            )}
+
+            <div className="flex gap-2">
+              <Button onClick={handleCreate} disabled={creating || !name.trim()} className="text-xs h-8">
+                {creating ? "Creating…" : "Create suite"}
+              </Button>
             </div>
-          )}
-
-          {loading ? (
-            <p className="text-xs text-muted-foreground">Loading…</p>
-          ) : suites.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No suites yet. Create one to group tests into a runnable batch.</p>
-          ) : (
-            <div className="space-y-3">
-              {suites.map((suite) => (
-                <Card key={suite.id}>
-                  <CardContent className="pt-4 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-sm">{suite.name}</span>
-                      <ModeBadge mode={suite.mode} />
-                      <Badge variant="outline">{suite.tests.length} test(s)</Badge>
-                      <div className="ml-auto flex items-center gap-1">
-                        <Button size="sm" variant="ghost" className="text-xs h-7" disabled={runningSuite !== null}
-                          onClick={() => handleStartEdit(suite)}>
-                          <Settings2 className="size-3.5" />
-                        </Button>
-                        <Button size="sm" className="text-xs h-7" disabled={runningSuite !== null} onClick={() => handleRun(suite)}>
-                          {runningSuite === suite.id ? <RefreshCw className="size-3.5 mr-1 animate-spin" /> : <Play className="size-3.5 mr-1" />}
-                          Run
-                        </Button>
-                        <Button size="sm" variant="ghost" className="text-xs h-7 text-muted-foreground hover:text-red-500" onClick={() => handleDelete(suite)}>
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-
-                    {editingSuite === suite.id ? (
-                      <div className="space-y-2">
-                        <BucketsEditor
-                          allItems={allTestItems}
-                          members={editMembers}
-                          onChange={setEditMembers}
-                          itemNoun="test"
-                        />
-                        <div className="flex gap-2">
-                          <Button size="sm" className="text-xs h-7" disabled={savingMembers} onClick={() => handleSaveEdit(suite.id)}>
-                            {savingMembers ? "Saving…" : "Save members"}
-                          </Button>
-                          <Button size="sm" variant="ghost" className="text-xs h-7" onClick={() => setEditingSuite(null)}>Cancel</Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <MemberGroupChips
-                        groups={partitionMembers(suite.tests.map((t) => ({ id: t.testId, parallel: t.parallel })))}
-                        getLabel={(id) => suite.tests.find((t) => t.testId === id)?.name ?? `#${id}`}
-                      />
-                    )}
-
-                    {runningSuite === suite.id && (
-                      <div className="space-y-2">
-                        <div className="border border-zinc-800 rounded-lg p-2 max-h-48 overflow-y-auto space-y-0.5">
-                          {log.map((l, i) => (
-                            <div key={i} className={`text-xs ${l.status === "failed" ? "text-red-400" : l.status === "passed" ? "text-green-400" : "text-muted-foreground"}`}>
-                              {l.status === "failed" ? "\u2717" : l.status === "passed" ? "\u2713" : "\u2022"} {l.label}
-                            </div>
-                          ))}
-                        </div>
-                        <Button variant="destructive" size="sm" className="text-xs h-7" onClick={handleStop}>
-                          <Square className="size-3 mr-1" /> Stop
-                        </Button>
-                      </div>
-                    )}
-
-                    {runDetails[suite.id] && <SuiteRunCard suiteRun={runDetails[suite.id]} title={`Latest suite run #${runDetails[suite.id].id}`} />}
-
-                    {recentRuns[suite.id] && recentRuns[suite.id].length > 1 && (
-                      <p className="text-[11px] text-muted-foreground">
-                        {recentRuns[suite.id].length} run(s) total — latest shown above.
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

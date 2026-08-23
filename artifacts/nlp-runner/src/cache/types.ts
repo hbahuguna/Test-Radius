@@ -210,11 +210,15 @@ export interface RunWithSteps extends Run {
 /** Execution mode of a run; "mixed" when some members run parallel and others sequential. */
 export type SuiteMode = "sequential" | "parallel" | "mixed";
 
+/** Whether a suite groups UI (browser) tests or API (HTTP recording) sessions. */
+export type SuiteType = "ui" | "api";
+
 export interface Suite {
   id: number;
   name: string;
   description: string | null;
   mode: SuiteMode;
+  type: SuiteType;
   createdAt: string;
   updatedAt: string;
 }
@@ -223,6 +227,7 @@ export interface NewSuite {
   name: string;
   description?: string | null;
   mode?: SuiteMode;
+  type?: SuiteType;
 }
 
 export interface NewSuiteTest {
@@ -242,6 +247,17 @@ export interface SuiteTest {
 
 export interface SuiteWithTests extends Suite {
   tests: SuiteTest[];
+}
+
+export interface SuiteApiSession {
+  id: number;
+  suiteId: number;
+  sessionId: number;
+  position: number;
+}
+
+export interface SuiteWithApiSessions extends Suite {
+  apiSessions: SuiteApiSession[];
 }
 
 export interface Train {
