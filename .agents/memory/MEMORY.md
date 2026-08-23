@@ -2,3 +2,4 @@
 - [TestRadius DB bootstrap](testradius-db-bootstrap.md) — DB starts empty; schema must be pushed with `pnpm --filter @workspace/db run push` before any API calls work.
 - [Playwright Chromium on Replit](playwright-replit.md) — Playwright Chromium needs system deps + no-sandbox flags; use system binary via env var.
 - [QueryFirst selector strategy](queryfirst-selector-strategy.md) — text="..." locators must stay as-is through the replay pipeline; converting to nth-child in evaluate A then querying it in evaluate B causes race-condition failures.
+- [Monorepo dependency links](monorepo-dependency-links.md) — a frozen pnpm lockfile can still leave workspace symlinks missing; reinstall all workspace projects when Vite cannot resolve a declared package.
