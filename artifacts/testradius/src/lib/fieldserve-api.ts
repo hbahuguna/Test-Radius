@@ -434,6 +434,7 @@ export interface ReplayStep {
   pass: boolean;
   duration: number;
   error?: string;
+  requestBody?: string;
   responseBody?: string;
 }
 

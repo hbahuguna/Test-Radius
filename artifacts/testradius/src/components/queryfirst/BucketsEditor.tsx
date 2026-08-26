@@ -98,6 +98,16 @@ function moveGroupBy(members: BucketMember[], anchorId: number, delta: number): 
   return groups.flat();
 }
 
+function moveMemberBy(members: BucketMember[], memberId: number, delta: number): BucketMember[] {
+  const idx = members.findIndex((m) => m.id === memberId);
+  if (idx < 0) return members;
+  const next = idx + delta;
+  if (next < 0 || next >= members.length) return members;
+  const copy = [...members];
+  [copy[idx], copy[next]] = [copy[next], copy[idx]];
+  return copy;
+}
+
 function splitParallelGroup(members: BucketMember[], anchorId: number): BucketMember[] {
   const groups = partitionMembers(members);
   const idx = groupByAnchor(groups, anchorId);
@@ -126,19 +136,17 @@ export function MemberGroupChips({
         return (
           <span
             key={gi}
-            className={`inline-flex items-center rounded border px-1.5 py-0.5 ${
-              parallel ? "border-blue-700/40 bg-blue-900/15" : "border-amber-700/40 bg-amber-900/15"
-            }`}
+            className="inline-flex items-center rounded border border-zinc-700 bg-black px-1.5 py-0.5"
             title={parallel ? "Parallel group — runs together as one unit" : "Sequential step — runs alone"}
           >
-            <span className={`mr-1 text-[10px] font-semibold uppercase tracking-wide ${parallel ? "text-blue-400" : "text-amber-400"}`}>
+            <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-white/60">
               {gi + 1}
             </span>
             {g.map((m) => (
-              <span key={m.id} className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded ${parallel ? "text-blue-300" : "text-amber-300"}`}>
-                <span>{parallel ? "\u22a5" : "\u2192"}</span>
-                <span>{getLabel(m.id)}</span>
-                {getSublabel?.(m.id) && <span className="text-[10px] text-muted-foreground">{getSublabel(m.id)}</span>}
+              <span key={m.id} className="inline-flex items-center gap-1 text-xs text-white px-1.5 py-0.5 rounded">
+                <span className="text-white/70">{parallel ? "\u22a5" : "\u2192"}</span>
+                <span className="text-white">{getLabel(m.id)}</span>
+                {getSublabel?.(m.id) && <span className="text-[10px] text-white/60">{getSublabel(m.id)}</span>}
               </span>
             ))}
           </span>
@@ -196,7 +204,7 @@ export function BucketsEditor({ allItems, members, onChange, itemNoun }: Buckets
       {/* Available pool */}
       <div
         {...zoneProps("pool", ["member"], () => { if (drag && drag.kind === "member") emit(removeMember(members, drag.id)); })}
-        className={`rounded-lg border p-2 space-y-1 min-h-[56px] ${overZone === "pool" ? "border-primary/70 bg-primary/5" : "border-zinc-800 bg-zinc-950/50"}`}
+        className={`rounded-lg border p-2 space-y-1 min-h-[56px] ${overZone === "pool" ? "border-primary/70 bg-primary/5" : "border-zinc-800 bg-zinc-950"}`}
       >
         <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Available {itemNoun}s</p>
         {pool.length === 0 ? (
@@ -207,11 +215,11 @@ export function BucketsEditor({ allItems, members, onChange, itemNoun }: Buckets
               <div
                 key={item.id}
                 {...draggableProps({ kind: "pool", id: item.id })}
-                className="flex items-center gap-1.5 text-xs px-2 py-1 rounded border border-zinc-700 bg-zinc-800/50 cursor-grab hover:border-zinc-600 hover:bg-zinc-800"
+                className="flex items-center gap-1.5 text-xs text-white px-2 py-1 rounded border border-zinc-700 bg-black cursor-grab hover:border-zinc-600 hover:bg-zinc-900"
               >
-                <span className="font-mono text-[10px] text-muted-foreground">#{item.id}</span>
-                <span className="truncate">{item.label}</span>
-                {item.sublabel && <span className="text-[10px] text-muted-foreground ml-auto">{item.sublabel}</span>}
+                <span className="font-mono text-[10px] text-white/60">#{item.id}</span>
+                <span className="truncate text-white">{item.label}</span>
+                {item.sublabel && <span className="text-[10px] text-white/60 ml-auto">{item.sublabel}</span>}
               </div>
             ))}
           </div>
@@ -237,13 +245,9 @@ export function BucketsEditor({ allItems, members, onChange, itemNoun }: Buckets
               key={anchorId}
               {...zoneProps(`group-${anchorId}`, ["member", "pool"], () => { if (drag && drag.kind !== "group") emit(addToGroup(members, drag.id, anchorId)); })}
               className={`rounded-lg border p-2 space-y-2 transition-colors ${
-                parallel
-                  ? overZone === `group-${anchorId}`
-                    ? "border-blue-500/70 bg-blue-500/10"
-                    : "border-blue-800/40 bg-blue-950/10"
-                  : overZone === `group-${anchorId}`
-                    ? "border-amber-500/70 bg-amber-500/10"
-                    : "border-amber-800/40 bg-amber-950/10"
+                overZone === `group-${anchorId}`
+                  ? "border-zinc-500 bg-zinc-900"
+                  : "border-zinc-700 bg-zinc-900"
               }`}
             >
               {/* Header: drag handle for reordering, badge, actions */}
@@ -255,12 +259,10 @@ export function BucketsEditor({ allItems, members, onChange, itemNoun }: Buckets
               >
                 <span className="text-[10px] font-mono text-muted-foreground">G{gi + 1}</span>
                 <span
-                  className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${
-                    parallel ? "bg-blue-500/15 text-blue-400" : "bg-amber-500/15 text-amber-400"
-                  }`}
+                  className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-zinc-800 text-white"
                 >
                   {parallel ? "\u22a5 Parallel" : "\u2192 Sequential"}
-                  <span className="text-muted-foreground font-normal normal-case">({g.length})</span>
+                  <span className="text-white/60 font-normal normal-case">({g.length})</span>
                 </span>
                 <span className="ml-auto flex items-center gap-0.5">
                   <button
@@ -296,19 +298,39 @@ export function BucketsEditor({ allItems, members, onChange, itemNoun }: Buckets
 
               {/* Body: drop zone for members/pool */}
               <div className="flex flex-wrap gap-1.5">
-                {g.map((m) => (
+                {g.map((m, mi) => (
                   <div
                     key={m.id}
                     {...draggableProps({ kind: "member", id: m.id })}
-                    className="flex items-center gap-1.5 text-xs px-2 py-1 rounded border border-zinc-700 bg-zinc-800/50 cursor-grab hover:border-zinc-600"
+                    className="flex items-center gap-1 text-xs text-white px-2 py-1 rounded border border-zinc-700 bg-black cursor-grab hover:border-zinc-600"
                   >
-                    <span className="font-mono text-[10px] text-muted-foreground">#{m.id}</span>
-                    <span className="truncate">{itemLabel(m.id)}</span>
-                    {itemSublabel(m.id) && <span className="text-[10px] text-muted-foreground">{itemSublabel(m.id)}</span>}
+                    <span className="font-mono text-[10px] text-white/60">#{m.id}</span>
+                    <span className="truncate text-white">{itemLabel(m.id)}</span>
+                    {itemSublabel(m.id) && <span className="text-[10px] text-white/60">{itemSublabel(m.id)}</span>}
+                    <span className="flex items-center gap-0 ml-1 border-l border-zinc-700 pl-1">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); emit(moveMemberBy(members, m.id, -1)); }}
+                        disabled={mi === 0 && gi === 0}
+                        className="text-zinc-400 hover:text-white disabled:opacity-20 px-1 py-0.5 text-[11px] leading-none rounded hover:bg-zinc-700/50"
+                        title="Move earlier"
+                      >
+                        {"\u25b2"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); emit(moveMemberBy(members, m.id, 1)); }}
+                        disabled={mi === g.length - 1 && gi === groups.length - 1}
+                        className="text-zinc-400 hover:text-white disabled:opacity-20 px-1 py-0.5 text-[11px] leading-none rounded hover:bg-zinc-700/50"
+                        title="Move later"
+                      >
+                        {"\u25bc"}
+                      </button>
+                    </span>
                     <button
                       type="button"
                       onClick={() => emit(removeMember(members, m.id))}
-                      className="text-[10px] text-muted-foreground hover:text-red-400 ml-1"
+                      className="text-[10px] text-muted-foreground hover:text-red-400 ml-0.5"
                       title="Remove from sequence"
                     >
                       {"\u2715"}

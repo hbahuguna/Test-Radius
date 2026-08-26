@@ -429,6 +429,10 @@ export async function createSuite(request: { name: string; description?: string;
   return authedFetch<{ suite: QfSuite }>("/suites", { method: "POST", body: JSON.stringify(request) });
 }
 
+export async function updateSuite(suiteId: number, input: { name?: string; description?: string | null; mode?: QfMode }): Promise<{ suite: QfSuite }> {
+  return authedFetch<{ suite: QfSuite }>(`/suites/${suiteId}`, { method: "PATCH", body: JSON.stringify(input) });
+}
+
 export async function updateSuiteApiSessions(suiteId: number, apiSessionIds: number[]): Promise<{ suite: QfSuite }> {
   return authedFetch<{ suite: QfSuite }>(`/suites/${suiteId}/api-sessions`, { method: "PUT", body: JSON.stringify({ apiSessionIds }) });
 }

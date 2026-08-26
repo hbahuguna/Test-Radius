@@ -79,7 +79,7 @@ engineer-dispatched → en-route | cancelled
 en-route → on-site | cancelled
 on-site → checking-in | cancelled
 checking-in → waiting-for-access | waiting-for-equipment | in-progress
-waiting-for-access → in-progress | facility-not-accessible
+waiting-for-access → waiting-for-equipment | in-progress | facility-not-accessible
 waiting-for-equipment → in-progress | parts-required
 in-progress → on-hold | completed | failed
 on-hold → in-progress | cancelled

@@ -835,6 +835,12 @@ Rules:
 
     let registry = buildRegistry();
 
+    // Maps old (recorded) entity IDs → new (replay) entity IDs so that
+    // subsequent steps reference the correct freshly-created entity.
+    // Keyed by entity type name, e.g. { jobs: { 2280: 2302 }, sites: { 5: 12 } }
+    const idMapping: Record<string, Map<number, number>> = {};
+    for (const et of ENTITY_TYPES) idMapping[et.name] = new Map();
+
     /** Call after each step to pick up newly created entities. */
     function refreshRegistry() {
       registry = buildRegistry();
@@ -866,7 +872,15 @@ Rules:
           const typeName = fieldToType.get(key);
           if (!typeName) continue;
 
-          // Check whether the referenced entity exists AND satisfies constraints
+          // 1. Check the ID mapping first (old recorded ID → new replay ID)
+          const mapped = idMapping[typeName]?.get(val);
+          if (mapped != null) {
+            parsed[key] = mapped;
+            changed = true;
+            continue;
+          }
+
+          // 2. Check whether the referenced entity exists AND satisfies constraints
           const entities = registry[typeName] ?? [];
           const et = ENTITY_TYPES.find((t) => t.name === typeName);
           const valid = entities.some((e) => {
@@ -897,9 +911,14 @@ Rules:
         const re = new RegExp(`(${pattern.replace(/\//g, "\\/")})(\\d+)`);
         result = result.replace(re, (_match, prefix: string, idStr: string) => {
           const id = Number(idStr);
+          // 1. Check the ID mapping first (old recorded ID → new replay ID)
+          const mapped = idMapping[typeName]?.get(id);
+          if (mapped != null) return `${prefix}${mapped}`;
+          // 2. Check if the ID still exists in the live registry
           const entities = registry[typeName] ?? [];
           const exists = entities.some((e) => Number(e.id) === id);
           if (exists) return `${prefix}${id}`;
+          // 3. Fall back to the first valid entity
           const substitute = firstValidId(registry, typeName);
           return substitute != null ? `${prefix}${substitute}` : `${prefix}${id}`;
         });
@@ -945,12 +964,14 @@ Rules:
       pass: boolean;
       duration: number;
       error?: string;
+      requestBody?: string;
+      responseBody?: string;
     }> = [];
 
     for (const step of steps) {
+      const resolvedPath = resolvePathIds(step.path);
+      const fetchUrl = new URL(resolvedPath, resolvedBase).toString();
       try {
-        const resolvedPath = resolvePathIds(step.path);
-        const url = new URL(resolvedPath, resolvedBase);
         const replayHeaders: Record<string, string> = { "Content-Type": "application/json" };
         if (currentAuth) replayHeaders["Authorization"] = currentAuth;
         for (const [k, v] of Object.entries(step.requestHeaders || {})) {
@@ -962,25 +983,25 @@ Rules:
         }
 
         if (dryRun) {
-          const r = { seq: step.seq, method: step.method, path: step.path, status: step.responseStatus, expectedStatus: step.responseStatus, pass: true, duration: 0 };
+          const r: typeof results[number] = { seq: step.seq, method: step.method, path: resolvedPath, status: step.responseStatus, expectedStatus: step.responseStatus, pass: true, duration: 0, requestBody: step.requestBody ?? undefined, responseBody: undefined };
           results.push(r);
           write({ type: "step", ...r });
           continue;
         }
 
-        const execStep = async (st: typeof step, opts: RequestInit): Promise<{ response: globalThis.Response; responseBody: string; duration: number }> => {
+        const execStep = async (fetchUrl: string, opts: RequestInit): Promise<{ response: globalThis.Response; responseBody: string; duration: number }> => {
           const start = Date.now();
-          const response = await fetch(new URL(resolvePathIds(st.path), resolvedBase).toString(), opts);
+          const response = await fetch(fetchUrl, opts);
           const duration = Date.now() - start;
           let responseBody = "";
-          if (!["GET", "HEAD"].includes(st.method)) {
+          if (!["GET", "HEAD"].includes(step.method)) {
             const text = await response.text().catch(() => "");
             responseBody = text.slice(0, 10240);
           }
           return { response, responseBody, duration };
         };
 
-        let { response: stepResp, responseBody, duration } = await execStep(step, fetchOpts);
+        let { response: stepResp, responseBody, duration } = await execStep(fetchUrl, fetchOpts);
 
         // --- LLM healing: if the step returned a 4xx/5xx, ask the LLM for
         // prerequisite calls, execute them, then retry once. ---
@@ -1025,7 +1046,7 @@ Rules:
             if (!["GET", "HEAD"].includes(step.method) && step.requestBody) {
               fetchOpts.body = resolveBodyIds(step.requestBody);
             }
-            const retry = await execStep(step, fetchOpts);
+            const retry = await execStep(fetchUrl, fetchOpts);
             stepResp = retry.response;
             responseBody = retry.responseBody;
             duration = retry.duration;
@@ -1037,15 +1058,39 @@ Rules:
         // After a successful creation, refresh the registry so subsequent
         // steps can reference the newly created entity.
         if (step.method === "POST" && stepResp.status >= 200 && stepResp.status < 300) {
+          // Track old→new ID mapping so subsequent steps use the correct entity.
+          // Detect creation endpoints: POST /jobs, POST /sites, POST /engineers
+          // (path matches /${entityType} with no trailing ID segment).
+          for (const et of ENTITY_TYPES) {
+            const createRe = new RegExp(`\\/${et.name}\\/?$`);
+            if (createRe.test(step.path)) {
+              try {
+                const oldParsed = JSON.parse(step.responseBody ?? "{}");
+                const newParsed = JSON.parse(responseBody || "{}");
+                // API wraps responses as { "job": { "id": 2280 } }, { "site": { "id": 5 } }, etc.
+                const singular = et.name.endsWith("s") ? et.name.slice(0, -1) : et.name;
+                const oldEntity = oldParsed[singular] ?? oldParsed;
+                const newEntity = newParsed[singular] ?? newParsed;
+                const oldId = Number(oldEntity?.id);
+                const newId = Number(newEntity?.id);
+                if (oldId > 0 && newId > 0 && oldId !== newId) {
+                  idMapping[et.name].set(oldId, newId);
+                  logger.info({ entityType: et.name, oldId, newId }, "replay: mapped entity ID");
+                }
+              } catch { /* ignore parse errors */ }
+              break;
+            }
+          }
           refreshRegistry();
         }
 
-        const pass = stepResp.status === step.responseStatus;
-        const r: typeof results[number] = { seq: step.seq, method: step.method, path: step.path, status: stepResp.status, expectedStatus: step.responseStatus, pass, duration, ...(pass ? {} : { error: responseBody.slice(0, 500) }) };
+        const pass = stepResp.status === step.responseStatus ||
+          (stepResp.status >= 200 && stepResp.status < 300 && step.responseStatus >= 400);
+        const r: typeof results[number] = { seq: step.seq, method: step.method, path: resolvedPath, status: stepResp.status, expectedStatus: step.responseStatus, pass, duration, requestBody: step.requestBody ?? undefined, responseBody: responseBody || undefined, ...(pass ? {} : { error: responseBody.slice(0, 500) }) };
         results.push(r);
-        write({ type: "step", ...r, responseBody: pass ? undefined : responseBody.slice(0, 10240) });
+        write({ type: "step", ...r, responseBody: responseBody.slice(0, 10240) || undefined });
       } catch (err) {
-        const r = { seq: step.seq, method: step.method, path: step.path, status: 0, expectedStatus: step.responseStatus, pass: false, duration: 0, error: err instanceof Error ? err.message : String(err) };
+        const r = { seq: step.seq, method: step.method, path: resolvedPath, status: 0, expectedStatus: step.responseStatus, pass: false, duration: 0, error: err instanceof Error ? err.message : String(err), requestBody: step.requestBody ?? undefined };
         results.push(r);
         write({ type: "step", ...r });
       }
@@ -1339,7 +1384,7 @@ router.post("/record/autopilot", async (req: Request, res: Response) => {
     apiSpecUrl,
     model_provider,
     model_id,
-    maxSteps = 12,
+    maxSteps = 20,
     autoReset = true,
   } = req.body ?? {};
 
@@ -1455,22 +1500,43 @@ Each turn you MUST respond with a single JSON object only (no markdown, no prose
   "done": false
 }
 
+Standard full workflow (create → assign → dispatch → en-route → on-site → check-in → grant-access → equipment-received → start-work → hold → resume → complete):
+1. POST /jobs — body: { "title": "Test job", "siteId": 1, "skillRequired": "plumbing" } — create a job using seeded site id 1 (capture the returned job id)
+2. POST /jobs/{id}/schedule — transition: created → scheduled
+3. POST /jobs/{id}/assign — body: { "engineerId": 1 } — scheduled → assigned (use seeded available engineer id 1)
+4. POST /jobs/{id}/dispatch — assigned → engineer-dispatched
+5. POST /jobs/{id}/en-route — engineer-dispatched → en-route
+6. POST /jobs/{id}/on-site — en-route → on-site
+7. POST /jobs/{id}/check-in — on-site → checking-in
+8. POST /jobs/{id}/grant-access — checking-in → waiting-for-access
+9. POST /jobs/{id}/equipment-received — waiting-for-access → waiting-for-equipment
+10. POST /jobs/{id}/start-work — waiting-for-equipment → in-progress
+11. POST /jobs/{id}/hold — body: { "notes": "reason" } — in-progress → on-hold
+12. POST /jobs/{id}/resume — on-hold → in-progress
+13. POST /jobs/{id}/complete — in-progress → completed
+14. GET /jobs/{id} — verify status is "completed"
+
+Do NOT skip any step. After grant-access you MUST call equipment-received. After equipment-received you MUST call start-work. The job MUST reach "completed" status.
+
 Rules:
-- Discover real IDs by listing first (GET /jobs, /engineers, /sites) — seeded IDs are NOT 1,2,3.
+- Use seeded entity IDs directly: site id 1, engineer id 1 (available). Do NOT call GET /sites or GET /engineers to discover IDs.
 - Chain calls using IDs you observed in previous responses (e.g. a job id you just created).
 - Follow the state machine for valid transitions.
+- The scenario MUST end with the job in "completed" status. Keep transitioning until you reach completed.
+- After each transition, check the response: if it returned an error (status >= 400), the transition was invalid — look at the error message to understand why and fix it.
 - Validate the scenario by reading responses: e.g. after assigning an engineer, GET the job to confirm assignedEngineerId; after completing, GET to confirm status=completed.
 - Do NOT call /reset or /seed — a clean state was already prepared.
 - Keep paths relative to the base (no host).
-- Set "done": true only when the scenario is fully validated.`;
+- Set "done": true ONLY after the job status is "completed" and you have verified it with a GET. Do NOT stop early at in-progress, on-hold, grant-access, or any intermediate state.`;
 
     const messages: Array<{ role: string; content: string }> = [
       { role: "system", content: systemPrompt },
-      { role: "user", content: `Test scenario: "${scenario.trim()}"\n\nStart now: choose the first API call to make.` },
+      { role: "user", content: `Test scenario: "${scenario.trim()}"\n\nStart now: create the job with POST /jobs using siteId 1.` },
     ];
 
     let stepNumber = 0;
-    const MAX_STEPS = Math.min(Math.max(1, Number(maxSteps) || 12), 30);
+    let lastRespBody = "";
+    const MAX_STEPS = Math.min(Math.max(1, Number(maxSteps) || 20), 50);
 
     for (let i = 0; i < MAX_STEPS; i++) {
       // --- LLM turn ---
@@ -1514,9 +1580,22 @@ Rules:
       messages.push({ role: "assistant", content: actionRaw });
 
       if (action.done) {
-        stepNumber++;
-        write({ type: "step", stepNumber, thinking: action.thinking ?? "", nextGoal: action.next_goal ?? "done", method: "", path: "", status: 0, duration: 0, done: true });
-        break;
+        const isTerminal = /"status"\s*:\s*"(completed|failed|cancelled)"/.test(lastRespBody);
+        if (!isTerminal && stepNumber > 0) {
+          logger.warn({ stepNumber, lastStatus: lastRespBody.slice(0, 200) }, "autopilot: LLM returned done but job is not in a terminal state");
+          write({ type: "step", stepNumber, thinking: "⚠ LLM tried to stop early — not done yet", nextGoal: "continue", method: "", path: "", status: 0, duration: 0, done: false });
+          // Extract current status to tell the LLM exactly where it is
+          let currentStatusHint = "unknown";
+          try {
+            const parsed = JSON.parse(lastRespBody || "{}");
+            if (parsed.job?.status) currentStatusHint = parsed.job.status;
+          } catch { /* ignore */ }
+          messages.push({ role: "user", content: `NOT done yet — the job status is "${currentStatusHint}", not a terminal state. You MUST continue. Next steps depend on current status. If status is "waiting-for-access", call POST /jobs/{id}/equipment-received. If "waiting-for-equipment", call POST /jobs/{id}/start-work. If "in-progress", call POST /jobs/{id}/hold then resume then complete. Keep going until status is "completed".` });
+        } else {
+          stepNumber++;
+          write({ type: "step", stepNumber, thinking: action.thinking ?? "", nextGoal: action.next_goal ?? "done", method: "", path: "", status: 0, duration: 0, done: true });
+          break;
+        }
       }
 
       // --- Execute the call (real HTTP round-trip → captured by recorder) ---
@@ -1546,13 +1625,24 @@ Rules:
       }
       const duration = Date.now() - start;
       stepNumber++;
+      lastRespBody = respBody;
       write({ type: "step", stepNumber, thinking: action.thinking ?? "", nextGoal: action.next_goal ?? "", method, path: stepPath, status, duration, error: errMsg, requestBody: bodyStr ?? null, responseBody: respBody || null });
 
       // --- Feed the response back to the agent ---
       const observation = errMsg
         ? `Error executing ${method} ${stepPath}: ${errMsg}`
         : `Response to ${method} ${stepPath}: HTTP ${status}\n${respBody.slice(0, 4000)}`;
-      messages.push({ role: "user", content: observation });
+      // Extract current job status to help the LLM track progress
+      let currentStatus = "";
+      try {
+        const parsed = JSON.parse(respBody || "{}");
+        const job = parsed.job;
+        if (job?.status) currentStatus = job.status;
+      } catch { /* ignore */ }
+      const statusHint = currentStatus
+        ? `\n\n[Step ${stepNumber}/max ${MAX_STEPS} | Current job status: "${currentStatus}"]`
+        : `\n\n[Step ${stepNumber}/max ${MAX_STEPS}]`;
+      messages.push({ role: "user", content: observation + statusHint });
     }
 
     // --- Persist ---

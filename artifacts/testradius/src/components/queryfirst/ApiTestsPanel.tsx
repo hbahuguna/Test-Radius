@@ -20,7 +20,6 @@ import {
 import { ModelSelector, defaultModelFor } from "@/components/tester/ModelSelector";
 import { type UserApiKey } from "@/lib/agentic-api";
 import {
-  parseApiTestCsv,
   runApiTests,
   resultsToCsv,
   type ParsedApiTest,
@@ -31,7 +30,6 @@ import { toast } from "sonner";
 import {
   Play,
   Square,
-  Upload,
   Sparkles,
   Trash2,
   ChevronDown,
@@ -70,13 +68,6 @@ export function ApiTestsPanel() {
   // --- Seed/Reset state ---
   const [autoReset] = useState(true);
 
-  // --- CSV Upload state ---
-  const [csvTests, setCsvTests] = useState<ParsedApiTest[]>([]);
-  const [csvFileName, setCsvFileName] = useState("");
-  const [runningCsv, setRunningCsv] = useState(false);
-  const [csvProgress, setCsvProgress] = useState<{ current: number; total: number } | null>(null);
-  const csvInputRef = useRef<HTMLInputElement>(null);
-
   // --- Generated Tests state ---
   const [aiTests, setAiTests] = useState<ParsedApiTest[]>([]);
 
@@ -96,6 +87,7 @@ export function ApiTestsPanel() {
   const [apiSpecUrl, setApiSpecUrl] = useState("/api/fieldserve/openapi.json");
   const [selectedSession, setSelectedSession] = useState<number | null>(null);
   const [selectedSessionSteps, setSelectedSessionSteps] = useState<RecordedStep[]>([]);
+  const [expandedRecordedStep, setExpandedRecordedStep] = useState<number | null>(null);
   const [replaying, setReplaying] = useState(false);
   const [generatingFromRecord, setGeneratingFromRecord] = useState(false);
   const [genRecordOutput, setGenRecordOutput] = useState("");
@@ -121,57 +113,13 @@ export function ApiTestsPanel() {
 
   // --- Handlers ---
 
-  const handleCsvUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setCsvFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = reader.result as string;
-      const tests = parseApiTestCsv(text);
-      setCsvTests(tests);
-      addLog(`Loaded ${tests.length} tests from ${file.name}`, "info");
-      toast.success(`Parsed ${tests.length} test cases from CSV`);
-    };
-    reader.readAsText(file);
-    e.target.value = "";
-  };
-
-  const handleRunCsv = async () => {
-    if (csvTests.length === 0) return;
-    setRunningCsv(true);
-    setCsvProgress({ current: 0, total: csvTests.length });
-    addLog(`Running ${csvTests.length} CSV tests...`, "info");
-
-    const run = await runApiTests(
-      csvTests,
-      (result, idx, total) => {
-        setCsvProgress({ current: idx + 1, total });
-        const icon = result.status === "passed" ? "✓" : result.status === "failed" ? "✗" : "⚠";
-        const color = result.status === "passed" ? "pass" : result.status === "failed" ? "fail" : "error";
-        addLog(`${icon} ${result.method} ${result.path} → ${result.actual.statusCode} (${result.actual.duration}ms)`, color);
-      },
-      undefined,
-      { autoReset },
-    );
-
-    setRuns((prev) => [run, ...prev]);
-    setRunningCsv(false);
-    setCsvProgress(null);
-    addLog(`CSV run complete: ${run.passed}/${run.totalTests} passed, ${run.failed} failed, ${run.errors} errors`, run.failed === 0 && run.errors === 0 ? "pass" : "fail");
-    toast.success(`CSV run: ${run.passed}/${run.totalTests} passed`);
-  };
-
   const handleRunSavedTests = async () => {
     if (savedTests.length === 0) return;
-    setRunningCsv(true);
-    setCsvProgress({ current: 0, total: savedTests.length });
     addLog(`Running ${savedTests.length} saved tests...`, "info");
 
     const run = await runApiTests(
       savedTests,
       (result, idx, total) => {
-        setCsvProgress({ current: idx + 1, total });
         const icon = result.status === "passed" ? "✓" : result.status === "failed" ? "✗" : "⚠";
         const color = result.status === "passed" ? "pass" : result.status === "failed" ? "fail" : "error";
         addLog(`${icon} ${result.method} ${result.path} → ${result.actual.statusCode} (${result.actual.duration}ms)`, color);
@@ -181,22 +129,17 @@ export function ApiTestsPanel() {
     );
 
     setRuns((prev) => [run, ...prev]);
-    setRunningCsv(false);
-    setCsvProgress(null);
     addLog(`Run complete: ${run.passed}/${run.totalTests} passed`, run.failed === 0 ? "pass" : "fail");
     toast.success(`Run: ${run.passed}/${run.totalTests} passed`);
   };
 
   const handleRunAiTests = async () => {
     if (aiTests.length === 0) return;
-    setRunningCsv(true);
-    setCsvProgress({ current: 0, total: aiTests.length });
     addLog(`Running ${aiTests.length} AI-generated tests...`, "info");
 
     const run = await runApiTests(
       aiTests,
       (result, idx, total) => {
-        setCsvProgress({ current: idx + 1, total });
         const icon = result.status === "passed" ? "✓" : result.status === "failed" ? "✗" : "⚠";
         const color = result.status === "passed" ? "pass" : result.status === "failed" ? "fail" : "error";
         addLog(`${icon} ${result.method} ${result.path} → ${result.actual.statusCode}`, color);
@@ -206,8 +149,6 @@ export function ApiTestsPanel() {
     );
 
     setRuns((prev) => [run, ...prev]);
-    setRunningCsv(false);
-    setCsvProgress(null);
     addLog(`AI run complete: ${run.passed}/${run.totalTests} passed`, run.failed === 0 ? "pass" : "fail");
     toast.success(`AI run: ${run.passed}/${run.totalTests} passed`);
   };
@@ -297,9 +238,11 @@ export function ApiTestsPanel() {
     if (selectedSession === sessionId) {
       setSelectedSession(null);
       setSelectedSessionSteps([]);
+      setExpandedRecordedStep(null);
       return;
     }
     setSelectedSession(sessionId);
+    setExpandedRecordedStep(null);
     try {
       const result = await getRecordedSession(sessionId);
       setSelectedSessionSteps(result.steps);
@@ -339,7 +282,7 @@ export function ApiTestsPanel() {
         provider,
         modelId,
         onStep: (s) => {
-          setAutopilotSteps((prev) => [...prev, { stepNumber: s.seq, method: s.method, path: s.path, status: s.status, duration: s.duration, thinking: "", nextGoal: "", responseBody: s.responseBody, error: s.error } as AutopilotStep]);
+          setAutopilotSteps((prev) => [...prev, { stepNumber: s.seq, method: s.method, path: s.path, status: s.status, duration: s.duration, thinking: "", nextGoal: "", requestBody: s.requestBody, responseBody: s.responseBody, error: s.error } as AutopilotStep]);
           addLog(`  [${s.seq}] ${s.method} ${s.path} → ${s.status} (${s.duration}ms) ${s.pass ? "✓" : "✗ FAIL"}`, s.pass ? "pass" : "fail");
         },
         onHealing: (h) => {
@@ -445,44 +388,6 @@ export function ApiTestsPanel() {
     <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr_360px] gap-4">
       {/* LEFT: Controls */}
       <div className="space-y-4">
-        {/* CSV Upload */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Upload className="size-4" />
-              CSV Upload
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <input ref={csvInputRef} type="file" accept=".csv" className="hidden" onChange={handleCsvUpload} />
-            <Button size="sm" variant="outline" className="w-full" onClick={() => csvInputRef.current?.click()}>
-              <Upload className="size-3 mr-1" />
-              {csvFileName || "Choose CSV file"}
-            </Button>
-            {csvTests.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">{csvTests.length} test cases loaded</p>
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={handleRunCsv} disabled={runningCsv} className="flex-1">
-                    <Play className="size-3 mr-1" /> Run All
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => { setCsvTests([]); setCsvFileName(""); }}>
-                    Clear
-                  </Button>
-                </div>
-                {csvProgress && (
-                  <div className="w-full bg-zinc-800 rounded-full h-1.5">
-                    <div
-                      className="bg-primary h-1.5 rounded-full transition-all"
-                      style={{ width: `${(csvProgress.current / csvProgress.total) * 100}%` }}
-                    />
-                  </div>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
         {/* Recording */}
         <Card>
           <CardHeader className="pb-2">
@@ -604,18 +509,37 @@ export function ApiTestsPanel() {
                 <Label className="text-xs">Steps ({selectedSessionSteps.length})</Label>
                 <div className="mt-1 space-y-0.5 max-h-52 overflow-y-auto rounded border bg-muted/20 p-1">
                   {selectedSessionSteps.map((step) => (
-                    <div
-                      key={step.id}
-                      className="flex items-center gap-1.5 px-1.5 py-1 rounded text-xs hover:bg-muted/60"
-                    >
-                      <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-medium leading-none ${
-                        step.responseStatus < 400 ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"
-                      }`}>
-                        {step.method}
-                      </span>
-                      <span className="flex-1 truncate font-mono">{step.path}</span>
-                      <span className="text-muted-foreground">{step.responseStatus}</span>
-                      <span className="text-muted-foreground">{step.durationMs}ms</span>
+                    <div key={step.id}>
+                      <div
+                        className="flex items-center gap-1.5 px-1.5 py-1 rounded text-xs hover:bg-muted/60 cursor-pointer"
+                        onClick={() => setExpandedRecordedStep(expandedRecordedStep === step.id ? null : step.id)}
+                      >
+                        {expandedRecordedStep === step.id ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
+                        <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-medium leading-none ${
+                          step.responseStatus < 400 ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"
+                        }`}>
+                          {step.method}
+                        </span>
+                        <span className="flex-1 truncate font-mono">{step.path}</span>
+                        <span className="text-muted-foreground">{step.responseStatus}</span>
+                        <span className="text-muted-foreground">{step.durationMs}ms</span>
+                      </div>
+                      {expandedRecordedStep === step.id && (
+                        <div className="ml-5 mt-0.5 mb-1 space-y-1 text-xs">
+                          {step.requestBody && (
+                            <div>
+                              <span className="text-muted-foreground">Request body:</span>
+                              <pre className="text-foreground/90 mt-0.5 whitespace-pre-wrap break-all max-h-24 overflow-y-auto">{(() => { try { return JSON.stringify(JSON.parse(step.requestBody), null, 2); } catch { return step.requestBody; } })()}</pre>
+                            </div>
+                          )}
+                          {step.responseBody && (
+                            <div>
+                              <span className="text-muted-foreground">Response ({step.responseStatus}):</span>
+                              <pre className="text-foreground/90 mt-0.5 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">{(() => { try { return JSON.stringify(JSON.parse(step.responseBody), null, 2); } catch { return step.responseBody; } })()}</pre>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -656,7 +580,7 @@ export function ApiTestsPanel() {
               <CardTitle className="text-sm flex items-center justify-between">
                 <span>Generated Tests ({aiTests.length})</span>
                 <div className="flex gap-1">
-                  <Button size="sm" onClick={handleRunAiTests} disabled={runningCsv}>
+                  <Button size="sm" onClick={handleRunAiTests}>
                     <Play className="size-3 mr-1" /> Run
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => handleAddToSaved(aiTests)}>
@@ -685,7 +609,7 @@ export function ApiTestsPanel() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center justify-between">
                 <span>Saved Tests ({savedTests.length})</span>
-                <Button size="sm" onClick={handleRunSavedTests} disabled={runningCsv}>
+                <Button size="sm" onClick={handleRunSavedTests}>
                   <Play className="size-3 mr-1" /> Run
                 </Button>
               </CardTitle>

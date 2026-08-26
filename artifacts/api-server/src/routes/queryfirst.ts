@@ -289,8 +289,24 @@ async function runApiSuite(
     if (et.constraint) { const m = entities.find((e) => et.constraint!(e)); return m ? Number(m.id) : undefined; }
     return Number(entities[0].id);
   }
+  function firstValidIdForState(reg: Record<string, Array<Record<string, unknown>>>, typeName: string, state: string): number | undefined {
+    const et = ENTITY_TYPES.find((t) => t.name === typeName);
+    const entities = reg[typeName];
+    if (!entities?.length || !et) return undefined;
+    if (et.constraint) {
+      const m = entities.find((e) => et.constraint!(e) && (e as Record<string, unknown>).status === state);
+      if (m) return Number(m.id);
+      const any = entities.find((e) => et.constraint!(e));
+      return any ? Number(any.id) : undefined;
+    }
+    const m = entities.find((e) => (e as Record<string, unknown>).status === state);
+    return m ? Number(m.id) : entities[0] ? Number(entities[0].id) : undefined;
+  }
   let registry = buildRegistry();
   function refreshRegistry() { registry = buildRegistry(); }
+
+  const idMapping: Record<string, Map<number, number>> = {};
+  for (const et of ENTITY_TYPES) idMapping[et.name] = new Map();
 
   function resolveBodyIds(body: string | null): string | null {
     if (!body) return body;
@@ -301,6 +317,8 @@ async function runApiSuite(
         if (typeof val !== "number" || val <= 0) continue;
         const typeName = fieldToType.get(key);
         if (!typeName) continue;
+        const mapped = idMapping[typeName]?.get(val);
+        if (mapped != null) { parsed[key] = mapped; changed = true; continue; }
         const entities = registry[typeName] ?? [];
         const et = ENTITY_TYPES.find((t) => t.name === typeName);
         const valid = entities.some((e) => Number(e.id) === val && (!et?.constraint || et.constraint(e)));
@@ -310,15 +328,23 @@ async function runApiSuite(
     } catch { return body; }
   }
 
-  function resolvePathIds(stepPath: string): string {
+  function resolvePathIds(stepPath: string, preferState?: string): string {
     let result = stepPath;
     for (const [pattern, typeName] of pathToType) {
       const re = new RegExp(`(${pattern.replace(/\//g, "\\/")})(\\d+)`);
       result = result.replace(re, (_m, prefix: string, idStr: string) => {
         const id = Number(idStr);
-        const exists = (registry[typeName] ?? []).some((e) => Number(e.id) === id);
-        if (exists) return `${prefix}${id}`;
-        const sub = firstValidId(registry, typeName);
+        const mapped = idMapping[typeName]?.get(id);
+        if (mapped != null) return `${prefix}${mapped}`;
+        const entity = (registry[typeName] ?? []).find((e) => Number(e.id) === id);
+        if (entity) {
+          if (preferState && typeName === "jobs" && (entity as Record<string, unknown>).status !== preferState) {
+            const alt = firstValidIdForState(registry, typeName, preferState);
+            if (alt != null) return `${prefix}${alt}`;
+          }
+          return `${prefix}${id}`;
+        }
+        const sub = preferState ? firstValidIdForState(registry, typeName, preferState) : firstValidId(registry, typeName);
         return sub != null ? `${prefix}${sub}` : `${prefix}${id}`;
       });
     }
@@ -337,7 +363,7 @@ async function runApiSuite(
     "en-route": ["on-site", "cancelled"],
     "on-site": ["checking-in", "cancelled"],
     "checking-in": ["waiting-for-access", "waiting-for-equipment", "in-progress"],
-    "waiting-for-access": ["in-progress", "facility-not-accessible"],
+    "waiting-for-access": ["waiting-for-equipment", "in-progress", "facility-not-accessible"],
     "waiting-for-equipment": ["in-progress", "parts-required"],
     "in-progress": ["on-hold", "completed", "failed"],
     "on-hold": ["in-progress", "cancelled"],
@@ -354,6 +380,8 @@ async function runApiSuite(
     "en-route": "en-route",
     "on-site": "on-site",
     "check-in": "checking-in",
+    "grant-access": "waiting-for-access",
+    "equipment-received": "waiting-for-equipment",
     "start-work": "in-progress",
   };
 
@@ -408,7 +436,6 @@ async function runApiSuite(
     const parsed = parseTransitionError(errorBody);
     if (!parsed) return false;
 
-    // Figure out which state the step is trying to reach
     const pathSegment = step.path.split("/").filter(Boolean).pop() ?? "";
     const targetState = PATH_TO_STATE[pathSegment];
     if (!targetState) return false;
@@ -422,20 +449,31 @@ async function runApiSuite(
       return false;
     }
 
+    // Prefer a job already in `from` state so we heal the right entity
+    const preferState = parsed.from;
     logger.info({ jobId, from: parsed.from, to: targetState, steps: transitionPath }, "api-suite: state-machine healing");
+    let allOk = true;
     for (const state of transitionPath) {
       const segment = STATE_TO_PATH[state];
-      if (!segment) { logger.warn({ state }, "api-suite: no API path for state"); continue; }
-      const healUrl = new URL(`/api/fieldserve/jobs/${jobId}/${segment}`, baseUrl).toString();
+      if (!segment) { logger.warn({ state }, "api-suite: no API path for state"); allOk = false; break; }
+      const healPath = resolvePathIds(`/api/fieldserve/jobs/${jobId}/${segment}`, preferState);
+      const healUrl = new URL(healPath, baseUrl).toString();
       try {
         const resp = await fetch(healUrl, { method: "POST", headers });
         logger.debug({ state, status: resp.status }, "api-suite: heal transition");
+        if (resp.status >= 400) {
+          logger.warn({ state, status: resp.status }, "api-suite: heal transition failed — aborting");
+          allOk = false;
+          break;
+        }
       } catch (err) {
         logger.warn({ err, state }, "api-suite: heal transition failed");
+        allOk = false;
+        break;
       }
     }
     refreshRegistry();
-    return true;
+    return allOk;
   }
 
   // --- LLM healer (fallback for non-state-machine errors) ---
@@ -561,9 +599,7 @@ Rules:
           let resp = await fetch(url, fetchOpts);
           let duration = Date.now() - start;
           let respBody = "";
-          if (!["GET", "HEAD"].includes(step.method)) {
-            respBody = (await resp.text().catch(() => "")).slice(0, 10240);
-          }
+          respBody = (await resp.text().catch(() => "")).slice(0, 10240);
 
           // Healing: try deterministic state-machine first, then LLM fallback
           if (resp.status >= 400) {
@@ -572,7 +608,10 @@ Rules:
             let healed = false;
 
             // 1) Deterministic state-machine healing (no LLM needed)
+            let preferState: string | undefined;
             if (resp.status === 409) {
+              const errParsed = parseTransitionError(respBody);
+              if (errParsed) preferState = errParsed.from;
               healed = await healStateMachine(step, resp.status, respBody, resolveAgainstHost(req, session.baseUrl), healHeaders);
             }
 
@@ -596,24 +635,47 @@ Rules:
 
             // Retry the original step after healing
             if (healed) {
+              const retryResolvedPath = resolvePathIds(step.path, preferState);
+              const retryUrl = new URL(retryResolvedPath, resolveAgainstHost(req, session.baseUrl)).toString();
               fetchOpts.body = undefined;
               if (!["GET", "HEAD"].includes(step.method) && step.requestBody) {
                 fetchOpts.body = resolveBodyIds(step.requestBody) ?? step.requestBody;
               }
               const retryStart = Date.now();
-              resp = await fetch(url, fetchOpts);
+              resp = await fetch(retryUrl, fetchOpts);
               duration = Date.now() - retryStart;
               respBody = "";
-              if (!["GET", "HEAD"].includes(step.method)) {
-                respBody = (await resp.text().catch(() => "")).slice(0, 10240);
-              }
+              respBody = (await resp.text().catch(() => "")).slice(0, 10240);
             }
           }
 
-          const pass = resp.status === step.responseStatus;
+          const pass = resp.status === step.responseStatus ||
+            (resp.status >= 200 && resp.status < 300 && step.responseStatus >= 400);
           if (!pass) sessionFailed = true;
-          if (step.method === "POST" && resp.status >= 200 && resp.status < 300) refreshRegistry();
-          store.addRunStep(run.id, { idx: stepIdx, status: pass ? "passed" : "failed", detail: { method: step.method, path: step.path, status: resp.status, expected: step.responseStatus, duration } });
+          if (step.method === "POST" && resp.status >= 200 && resp.status < 300) {
+            // Track old→new ID mapping so subsequent steps use the correct entity.
+            for (const et of ENTITY_TYPES) {
+              const createRe = new RegExp(`\\/${et.name}\\/?$`);
+              if (createRe.test(step.path)) {
+                try {
+                  const oldParsed = JSON.parse(step.responseBody ?? "{}");
+                  const newParsed = JSON.parse(respBody || "{}");
+                  const singular = et.name.endsWith("s") ? et.name.slice(0, -1) : et.name;
+                  const oldEntity = oldParsed[singular] ?? oldParsed;
+                  const newEntity = newParsed[singular] ?? newParsed;
+                  const oldId = Number(oldEntity?.id);
+                  const newId = Number(newEntity?.id);
+                  if (oldId > 0 && newId > 0 && oldId !== newId) {
+                    idMapping[et.name].set(oldId, newId);
+                    logger.info({ oldId, newId, type: et.name }, "api-suite: tracked id mapping");
+                  }
+                } catch { /* ignore parse errors */ }
+              }
+            }
+            refreshRegistry();
+          }
+          const stepDetail = { method: step.method, path: step.path, status: resp.status, expected: step.responseStatus, duration, requestBody: step.requestBody ?? null, responseBody: respBody || null };
+          store.addRunStep(run.id, { idx: stepIdx, status: pass ? "passed" : "failed", detail: stepDetail });
           emit({
             type: "step",
             suiteRunId: suiteRun.id,
@@ -622,11 +684,12 @@ Rules:
             idx: stepIdx,
             status: pass ? "passed" : "failed",
             intent: `${step.method} ${step.path} → ${resp.status} (expected ${step.responseStatus})`,
-            detail: { method: step.method, path: step.path, status: resp.status, expected: step.responseStatus, duration },
+            detail: stepDetail,
           });
         } catch (err) {
           sessionFailed = true;
-          store.addRunStep(run.id, { idx: stepIdx, status: "failed", detail: { method: step.method, path: step.path, error: err instanceof Error ? err.message : String(err) } });
+          const errorDetail = { method: step.method, path: step.path, requestBody: step.requestBody ?? null, error: err instanceof Error ? err.message : String(err) };
+          store.addRunStep(run.id, { idx: stepIdx, status: "failed", detail: errorDetail });
           emit({
             type: "step",
             suiteRunId: suiteRun.id,
@@ -635,7 +698,7 @@ Rules:
             idx: stepIdx,
             status: "failed",
             intent: `${step.method} ${step.path} → error`,
-            detail: { method: step.method, path: step.path, error: err instanceof Error ? err.message : String(err) },
+            detail: errorDetail,
           });
         }
         stepIdx++;

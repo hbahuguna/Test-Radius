@@ -13,6 +13,8 @@ import {
   listTests,
   startSuiteRun,
   stopRun,
+  updateSuite,
+  updateSuiteApiSessions,
   updateSuiteTests,
   type QfEvent,
   type QfMode,
@@ -60,6 +62,7 @@ function SuiteCard({
   editMembers,
   savingMembers,
   allTestItems,
+  allApiSessionItems,
   onStartEdit,
   onSaveEdit,
   onCancelEdit,
@@ -77,6 +80,7 @@ function SuiteCard({
   editMembers: BucketMember[];
   savingMembers: boolean;
   allTestItems: BucketItem[];
+  allApiSessionItems: BucketItem[];
   onStartEdit: (suite: QfSuite) => void;
   onSaveEdit: (suiteId: number) => void;
   onCancelEdit: () => void;
@@ -98,12 +102,10 @@ function SuiteCard({
             <Badge variant="outline">{suite.tests.length} test(s)</Badge>
           )}
           <div className="ml-auto flex items-center gap-1">
-            {!isApi && (
-              <Button size="sm" variant="ghost" className="text-xs h-7" disabled={runningSuite !== null}
-                onClick={() => onStartEdit(suite)}>
-                <Settings2 className="size-3.5" />
-              </Button>
-            )}
+            <Button size="sm" variant="ghost" className="text-xs h-7" disabled={runningSuite !== null}
+              onClick={() => onStartEdit(suite)}>
+              <Settings2 className="size-3.5" />
+            </Button>
             <Button size="sm" className="text-xs h-7" disabled={runningSuite !== null} onClick={() => onRun(suite)}>
               {runningSuite === suite.id ? <RefreshCw className="size-3.5 mr-1 animate-spin" /> : <Play className="size-3.5 mr-1" />}
               Run
@@ -114,32 +116,32 @@ function SuiteCard({
           </div>
         </div>
 
-        {isApi ? (
-          <div className="flex flex-wrap gap-1">
-            {suite.apiSessions.map((s) => (
-              <Badge key={s.suiteApiSessionId} variant="outline" className="text-xs border-amber-500/30 text-amber-300">
-                Session #{s.sessionId}
-              </Badge>
-            ))}
-            {suite.apiSessions.length === 0 && (
-              <p className="text-xs text-muted-foreground">No API sessions added.</p>
-            )}
+        {editingSuite === suite.id ? (
+          <div className="space-y-2">
+            <BucketsEditor
+              allItems={isApi ? allApiSessionItems : allTestItems}
+              members={editMembers}
+              onChange={onEditMembersChange}
+              itemNoun={isApi ? "session" : "test"}
+            />
+            <div className="flex gap-2">
+              <Button size="sm" className="text-xs h-7" disabled={savingMembers} onClick={() => onSaveEdit(suite.id)}>
+                {savingMembers ? "Saving…" : isApi ? "Save sessions" : "Save members"}
+              </Button>
+              <Button size="sm" variant="ghost" className="text-xs h-7" onClick={onCancelEdit}>Cancel</Button>
+            </div>
           </div>
         ) : (
-          editingSuite === suite.id ? (
-            <div className="space-y-2">
-              <BucketsEditor
-                allItems={allTestItems}
-                members={editMembers}
-                onChange={onEditMembersChange}
-                itemNoun="test"
-              />
-              <div className="flex gap-2">
-                <Button size="sm" className="text-xs h-7" disabled={savingMembers} onClick={() => onSaveEdit(suite.id)}>
-                  {savingMembers ? "Saving…" : "Save members"}
-                </Button>
-                <Button size="sm" variant="ghost" className="text-xs h-7" onClick={onCancelEdit}>Cancel</Button>
-              </div>
+          isApi ? (
+            <div className="flex flex-wrap gap-1">
+              {suite.apiSessions.map((s) => (
+                <Badge key={s.suiteApiSessionId} variant="outline" className="text-xs border-amber-500/30 text-white">
+                  Session #{s.sessionId}
+                </Badge>
+              ))}
+              {suite.apiSessions.length === 0 && (
+                <p className="text-xs text-muted-foreground">No API sessions added.</p>
+              )}
             </div>
           ) : (
             <MemberGroupChips
@@ -248,15 +250,28 @@ export function SuitesPanel() {
   };
 
   const handleStartEdit = (suite: QfSuite) => {
+    if (editingSuite === suite.id) {
+      setEditingSuite(null);
+      return;
+    }
     setEditingSuite(suite.id);
-    setEditMembers(suite.tests.map((t) => ({ id: t.testId, parallel: t.parallel })));
+    if (suite.type === "api") {
+      setEditMembers(suite.apiSessions.map((s) => ({ id: s.sessionId, parallel: false })));
+    } else {
+      setEditMembers(suite.tests.map((t) => ({ id: t.testId, parallel: t.parallel })));
+    }
   };
 
   const handleSaveEdit = async (suiteId: number) => {
     setSavingMembers(true);
     try {
-      const suiteMembers: QfSuiteMember[] = editMembers.map((m) => ({ testId: m.id, parallel: m.parallel }));
-      await updateSuiteTests(suiteId, suiteMembers);
+      const suite = suites.find((s) => s.id === suiteId);
+      if (suite?.type === "api") {
+        await updateSuiteApiSessions(suiteId, editMembers.map((m) => m.id));
+      } else {
+        const suiteMembers: QfSuiteMember[] = editMembers.map((m) => ({ testId: m.id, parallel: m.parallel }));
+        await updateSuiteTests(suiteId, suiteMembers);
+      }
       toast.success("Members updated");
       setEditingSuite(null);
       await refresh();
@@ -336,6 +351,11 @@ export function SuitesPanel() {
     setSelectedSessionIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   };
 
+  const allApiSessionItems = apiSessions.map((s) => ({
+    id: s.id,
+    label: `${s.name} (Session #${s.id} · ${s.stepCount} step(s))`,
+  }));
+
   const cardProps = {
     runningSuite,
     log,
@@ -345,6 +365,7 @@ export function SuitesPanel() {
     editMembers,
     savingMembers,
     allTestItems,
+    allApiSessionItems,
     onStartEdit: handleStartEdit,
     onSaveEdit: handleSaveEdit,
     onCancelEdit: () => setEditingSuite(null),

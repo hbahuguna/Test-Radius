@@ -176,7 +176,23 @@ function StepDetail({ detail }: { detail: QfRunStepDetail["detail"] }) {
     if (typeof detail.duration === "number") {
       parts.push(`[${detail.duration}ms]`);
     }
-    return <p className="text-xs text-muted-foreground font-mono truncate">{parts.join(" ")}</p>;
+    return (
+      <>
+        <p className="text-xs text-muted-foreground font-mono truncate">{parts.join(" ")}</p>
+        {typeof detail.requestBody === "string" && detail.requestBody && (
+          <div className="mt-1">
+            <span className="text-xs text-muted-foreground">Request body:</span>
+            <pre className="text-xs text-foreground/90 whitespace-pre-wrap break-all max-h-24 overflow-y-auto">{(() => { try { return JSON.stringify(JSON.parse(detail.requestBody as string), null, 2); } catch { return detail.requestBody; } })()}</pre>
+          </div>
+        )}
+        {typeof detail.responseBody === "string" && detail.responseBody && (
+          <div className="mt-1">
+            <span className="text-xs text-muted-foreground">Response ({String(detail.status)}):</span>
+            <pre className="text-xs text-foreground/90 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">{(() => { try { return JSON.stringify(JSON.parse(detail.responseBody as string), null, 2); } catch { return detail.responseBody; } })()}</pre>
+          </div>
+        )}
+      </>
+    );
   }
   return null;
 }
