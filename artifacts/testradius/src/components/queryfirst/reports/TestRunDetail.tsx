@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getTestRun, type QfRunStepDetail, type QfScreenshotRef, type QfTestRunDetail } from "@/lib/queryfirst-api";
-import { Camera } from "lucide-react";
+import { getTestRun, downloadRunReportPdf, type QfRunStepDetail, type QfScreenshotRef, type QfTestRunDetail } from "@/lib/queryfirst-api";
+import { Camera, Download } from "lucide-react";
 import { RunStatusBadge } from "./RunStatusBadge";
 import { fmtDuration, fmtTime } from "./format";
+import { toast } from "sonner";
 
 export function TestRunDetail({ runId }: { runId: number }) {
   const [run, setRun] = useState<QfTestRunDetail | null>(null);
@@ -61,6 +62,13 @@ export function TestRunDetail({ runId }: { runId: number }) {
             <span className="text-muted-foreground font-normal ml-auto shrink-0 text-xs">
               {fmtTime(run.startedAt)} → {fmtTime(run.finishedAt)} ({fmtDuration(run.startedAt, run.finishedAt)})
             </span>
+            <button
+              onClick={() => downloadRunReportPdf(run.runId).catch((err) => toast.error(`Download failed: ${err.message}`))}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Download PDF report"
+            >
+              <Download className="size-3.5" />
+            </button>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">

@@ -10,5 +10,9 @@ export default defineConfig({
     fileParallelism: false,
     // One browser is launched per integration test; give cold starts headroom.
     testTimeout: 90_000,
+    reporters: [
+      "default",
+      ["@workspace/report-gen/vitest-reporter", { outputDir: "test-reports" }],
+    ],
   },
 });

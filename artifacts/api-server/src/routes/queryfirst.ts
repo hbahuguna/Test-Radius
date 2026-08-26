@@ -41,6 +41,7 @@ import {
   type SuiteRun,
   type TrainRun,
 } from "@workspace/nlp-runner";
+import { generatePdfToBuffer, type TestSuiteReport, type TestSuiteGroup, type TestResult } from "@workspace/report-gen";
 
 const CHROME_WARMING_UP_MSG =
   "Chrome is still downloading on this server (first cold start takes ~3 minutes). Please wait a moment and try again.";
@@ -2538,4 +2539,131 @@ router.post("/browse", async (req: Request, res: Response) => {
     active.kind = null;
   }
   res.end();
+});
+
+// GET /queryfirst/runs/:runId/report.pdf — generate and download a PDF report for a test run
+router.get("/runs/:runId/report.pdf", async (req: Request, res: Response) => {
+  try {
+    const runId = Number(req.params.runId);
+    if (!Number.isInteger(runId) || runId <= 0) {
+      res.status(400).json({ error: "invalid_run_id" });
+      return;
+    }
+    const store = getStore();
+    const run = store.getRunWithSteps(runId);
+    if (!run) {
+      res.status(404).json({ error: "not_found", message: `Run #${runId} not found` });
+      return;
+    }
+    const test = store.getTest(run.testId);
+    const intentByIdx = new Map(store.listStepsByTest(run.testId).map((s) => [s.idx, s]));
+
+    const tests: TestResult[] = run.steps.map((rs) => ({
+      name: intentByIdx.has(rs.idx) ? stepToEnglish(intentByIdx.get(rs.idx)!) : `Step ${rs.idx + 1}`,
+      status: rs.status as TestResult["status"],
+      error: rs.status === "failed" ? (rs.detail as { error?: string })?.error ?? undefined : undefined,
+    }));
+
+    const passed = tests.filter((t) => t.status === "passed").length;
+    const failed = tests.filter((t) => t.status === "failed").length;
+    const skipped = tests.filter((t) => t.status === "skipped").length;
+
+    const duration = run.finishedAt && run.startedAt
+      ? new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()
+      : 0;
+
+    const report: TestSuiteReport = {
+      title: `QueryFirst \u2014 ${test?.name ?? `Test #${run.testId}`}`,
+      timestamp: new Date().toISOString(),
+      duration,
+      summary: { total: tests.length, passed, failed, skipped },
+      suites: [{ name: test?.name ?? `Test #${run.testId}`, tests }],
+      metadata: {
+        "Framework": "QueryFirst",
+        "Run ID": String(runId),
+        "Test ID": String(run.testId),
+        "Status": run.status,
+        "LLM Calls": String(run.llmCalls),
+        "Started": run.startedAt,
+        "Finished": run.finishedAt ?? "in progress",
+        "Node": process.version,
+      },
+    };
+
+    const pdfBuffer = await generatePdfToBuffer(report);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="report-run-${runId}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (err) {
+    logger.error({ err }, "queryfirst: generate report failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to generate report" });
+  }
+});
+
+// GET /queryfirst/suite-runs/:runId/report.pdf — generate and download a PDF report for a suite run
+router.get("/suite-runs/:runId/report.pdf", async (req: Request, res: Response) => {
+  try {
+    const suiteRunId = Number(req.params.runId);
+    if (!Number.isInteger(suiteRunId) || suiteRunId <= 0) {
+      res.status(400).json({ error: "invalid_run_id" });
+      return;
+    }
+    const store = getStore();
+    const payload = suiteRunPayload(store, suiteRunId);
+    if (!payload) {
+      res.status(404).json({ error: "not_found", message: `Suite run #${suiteRunId} not found` });
+      return;
+    }
+
+    const suiteGroups: TestSuiteGroup[] = [];
+    let totalPassed = 0, totalFailed = 0, totalSkipped = 0;
+
+    for (const member of payload.runs) {
+      const intentByIdx = new Map(store.listStepsByTest(member.testId).map((s) => [s.idx, s]));
+      const memberRun = store.getRunWithSteps(member.runId);
+      if (!memberRun) continue;
+
+      const tests: TestResult[] = memberRun.steps.map((rs) => ({
+        name: intentByIdx.has(rs.idx) ? stepToEnglish(intentByIdx.get(rs.idx)!) : `Step ${rs.idx + 1}`,
+        status: rs.status as TestResult["status"],
+        error: rs.status === "failed" ? (rs.detail as { error?: string })?.error ?? undefined : undefined,
+      }));
+
+      totalPassed += tests.filter((t) => t.status === "passed").length;
+      totalFailed += tests.filter((t) => t.status === "failed").length;
+      totalSkipped += tests.filter((t) => t.status === "skipped").length;
+
+      suiteGroups.push({ name: member.name, tests });
+    }
+
+    const duration = payload.finishedAt && payload.startedAt
+      ? new Date(payload.finishedAt).getTime() - new Date(payload.startedAt).getTime()
+      : 0;
+
+    const report: TestSuiteReport = {
+      title: `QueryFirst \u2014 Suite: ${payload.suiteName}`,
+      timestamp: new Date().toISOString(),
+      duration,
+      summary: { total: totalPassed + totalFailed + totalSkipped, passed: totalPassed, failed: totalFailed, skipped: totalSkipped },
+      suites: suiteGroups,
+      metadata: {
+        "Framework": "QueryFirst",
+        "Suite Run ID": String(suiteRunId),
+        "Suite": payload.suiteName,
+        "Status": payload.status,
+        "Mode": payload.mode,
+        "Started": payload.startedAt,
+        "Finished": payload.finishedAt ?? "in progress",
+        "Node": process.version,
+      },
+    };
+
+    const pdfBuffer = await generatePdfToBuffer(report);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="report-suite-${suiteRunId}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (err) {
+    logger.error({ err }, "queryfirst: generate suite report failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to generate report" });
+  }
 });

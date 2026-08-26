@@ -13,6 +13,7 @@ export default defineConfig({
     ["html", { open: "never" }],
     ["list"],
     ["./coverage-reporter.ts"],
+    ["@workspace/report-gen/playwright-reporter", { outputDir: "test-reports" }],
   ],
   use: {
     baseURL: BASE_URL,

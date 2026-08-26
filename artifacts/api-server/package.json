@@ -19,6 +19,7 @@
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
     "@workspace/nlp-runner": "workspace:*",
+    "@workspace/report-gen": "workspace:*",
     "@huggingface/transformers": "^4.2.0",
     "better-sqlite3": "^13.0.3",
     "cookie-parser": "^1.4.7",

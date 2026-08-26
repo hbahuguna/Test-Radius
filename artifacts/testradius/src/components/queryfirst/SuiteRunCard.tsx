@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { listSuiteScreenshots, type QfScreenshotRef, type QfSuiteRun } from "@/lib/queryfirst-api";
-import { Camera } from "lucide-react";
+import { listSuiteScreenshots, downloadSuiteRunReportPdf, type QfScreenshotRef, type QfSuiteRun } from "@/lib/queryfirst-api";
+import { Camera, Download } from "lucide-react";
+import { toast } from "sonner";
 
 function statusBadge(status: string) {
   if (status === "passed") return <Badge className="bg-green-500/20 text-green-300 border-green-500/30">PASS</Badge>;
@@ -37,6 +38,13 @@ export function SuiteRunCard({ suiteRun, title }: { suiteRun: QfSuiteRun; title?
             {new Date(suiteRun.startedAt).toLocaleTimeString()}
             {suiteRun.finishedAt ? ` → ${new Date(suiteRun.finishedAt).toLocaleTimeString()}` : ""}
           </span>
+          <button
+            onClick={() => downloadSuiteRunReportPdf(suiteRun.id).catch((err) => toast.error(`Download failed: ${err.message}`))}
+            className="ml-1 text-muted-foreground hover:text-foreground transition-colors"
+            title="Download PDF report"
+          >
+            <Download className="size-3.5" />
+          </button>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">

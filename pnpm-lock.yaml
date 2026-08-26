@@ -198,6 +198,9 @@ importers:
       '@workspace/nlp-runner':
         specifier: workspace:*
         version: link:../nlp-runner
+      '@workspace/report-gen':
+        specifier: workspace:*
+        version: link:../../lib/report-gen
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
@@ -288,6 +291,10 @@ importers:
         version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@25.6.0)(@vitest/coverage-v8@4.1.10)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
 
   artifacts/e2e-tests:
+    dependencies:
+      '@workspace/report-gen':
+        specifier: workspace:*
+        version: link:../../lib/report-gen
     devDependencies:
       '@browserbasehq/stagehand':
         specifier: ^3.7.1
@@ -496,6 +503,9 @@ importers:
       '@huggingface/transformers':
         specifier: ^4.2.0
         version: 4.2.0
+      '@workspace/report-gen':
+        specifier: workspace:*
+        version: link:../../lib/report-gen
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
@@ -775,6 +785,24 @@ importers:
       drizzle-kit:
         specifier: ^0.31.9
         version: 0.31.10
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@25.6.0)(@vitest/coverage-v8@4.1.10)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  lib/report-gen:
+    devDependencies:
+      '@playwright/test':
+        specifier: ^1.52.0
+        version: 1.60.0
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.6.0
+      playwright:
+        specifier: ^1.52.0
+        version: 1.60.0
+      typescript:
+        specifier: ~5.9.2
+        version: 5.9.3
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@25.6.0)(@vitest/coverage-v8@4.1.10)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)

@@ -21,6 +21,7 @@ import {
   patchStep,
   insertStep,
   getScreenshot,
+  downloadRunReportPdf,
   type QfTest,
   type QfRun,
   type QfEvent,
@@ -50,6 +51,7 @@ import {
   Plus,
   Check,
   X,
+  Download,
 } from "lucide-react";
 
 type Mode = "idle" | "recording" | "replaying" | "browsing";
@@ -873,6 +875,13 @@ const actionBadgeClass = (action: string) => {
                         </span>
                         <span>run #{r.id}</span>
                         <span className="text-muted-foreground">llm: {r.llmCalls}</span>
+                        <button
+                          onClick={() => downloadRunReportPdf(r.id).catch((err) => toast.error(`Download failed: ${err.message}`))}
+                          className="ml-auto text-muted-foreground hover:text-foreground transition-colors"
+                          title="Download PDF report"
+                        >
+                          <Download className="size-3" />
+                        </button>
                       </div>
                     ))}
                   </div>

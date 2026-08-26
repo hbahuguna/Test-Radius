@@ -9,6 +9,7 @@ import { LLMStepHealer } from "./replay/heal.js";
 import type { LaunchOptions } from "./browser/launch.js";
 import { detectGoogleSignIn } from "./browser/google-signin.js";
 import { runRecord, formatRecordReport } from "./planner/record-cli.js";
+import type { RecordReport } from "./planner/record-cli.js";
 import { createMatcher } from "./embeddings/matcher.js";
 import { embedCached } from "./embeddings/embed.js";
 import {
@@ -28,8 +29,71 @@ import { renderChecklist } from "./util/describe.js";
 import { LiveAgent } from "./live/agent.js";
 import type { BrowseResult } from "./live/views.js";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { generatePdf, type TestSuiteReport, type TestSuiteGroup, type TestResult } from "@workspace/report-gen";
 
 export { describeLocator, renderChecklist, stepToEnglish } from "./util/describe.js";
+
+function mapRecordReportToTestSuite(report: RecordReport, label: string): TestSuiteReport {
+  const tests: TestResult[] = [
+    {
+      name: report.testName,
+      status: report.error ? "failed" : report.dryRun.passed ? "passed" : "failed",
+      error: report.error ?? (!report.dryRun.passed ? report.dryRun.error : undefined),
+      annotations: {
+        query: report.query,
+        milestones: report.milestones.join(" > "),
+        dryRun: report.dryRun.passed ? "PASS" : "FAIL",
+        minimized: `${report.minimized.before} -> ${report.minimized.after} steps`,
+      },
+    },
+  ];
+
+  const suiteGroups: TestSuiteGroup[] = [
+    {
+      name: "Metrics",
+      tests: [
+        { name: "Turns", status: "passed", annotations: { value: String(report.metrics.turns) } },
+        { name: "Steps", status: "passed", annotations: { value: String(report.metrics.steps) } },
+        { name: "LLM Calls", status: "passed", annotations: { value: String(report.metrics.llmCalls) } },
+        { name: "Backtracks", status: "passed", annotations: { value: String(report.metrics.backtracks) } },
+        { name: "Guard Fires", status: "passed", annotations: { value: String(report.metrics.guardFires) } },
+      ],
+    },
+  ];
+
+  return {
+    title: `QueryFirst \u2014 ${label}`,
+    timestamp: new Date().toISOString(),
+    duration: 0,
+    summary: {
+      total: tests.length,
+      passed: tests.filter((t) => t.status === "passed").length,
+      failed: tests.filter((t) => t.status === "failed").length,
+      skipped: 0,
+    },
+    suites: [{ name: "Test Result", tests }, ...suiteGroups],
+    metadata: {
+      "Framework": "QueryFirst",
+      "Query": report.query,
+      "Cached": report.cached ? "Yes" : "No",
+      "Node": process.version,
+    },
+  };
+}
+
+async function generateRecordReportPdf(report: RecordReport, label: string): Promise<void> {
+  const outputDir = join(process.cwd(), "test-reports");
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const outputPath = join(outputDir, `record-${timestamp}.pdf`);
+  try {
+    const suiteReport = mapRecordReportToTestSuite(report, label);
+    await generatePdf(suiteReport, outputPath);
+    console.log(`\n\u2713 Test report generated: ${outputPath}`);
+  } catch (err) {
+    console.error(`\n\u2717 Failed to generate test report: ${err}`);
+  }
+}
 
 export function listTests(store: DataStore): string {
   const tests = store.listTests();
@@ -302,6 +366,7 @@ async function runRecordCommand(store: DataStore, parsed: RunCommandArgs): Promi
     maxDryRunAttempts: parsed.maxDryRunAttempts,
   });
   console.log(formatRecordReport(report));
+  await generateRecordReportPdf(report, "Record");
   return ok ? 0 : 1;
 }
 
@@ -546,6 +611,41 @@ async function replayTest(
       console.log(`  extracted ${key} = "${value}"`);
     }
     console.log(`  llm_calls: ${result.llmCalls}  self_healed: ${result.selfHealed}`);
+    const replayReport: TestSuiteReport = {
+      title: `QueryFirst \u2014 Replay: ${test.name}`,
+      timestamp: new Date().toISOString(),
+      duration: 0,
+      summary: {
+        total: result.steps.length,
+        passed: result.steps.filter((s) => s.status === "passed").length,
+        failed: result.steps.filter((s) => s.status === "failed").length,
+        skipped: result.steps.filter((s) => s.status === "skipped").length,
+      },
+      suites: [{
+        name: test.name,
+        tests: result.steps.map((s) => ({
+          name: `${s.intent}`,
+          status: s.status as TestResult["status"],
+          error: s.status === "failed" ? result.error : undefined,
+        })),
+      }],
+      metadata: {
+        "Framework": "QueryFirst",
+        "Mode": "Replay",
+        "Run ID": String(result.runId),
+        "Test ID": String(result.testId),
+        "Node": process.version,
+      },
+    };
+    const outputDir = join(process.cwd(), "test-reports");
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const outputPath = join(outputDir, `replay-${ts}.pdf`);
+    try {
+      await generatePdf(replayReport, outputPath);
+      console.log(`\n\u2713 Test report generated: ${outputPath}`);
+    } catch (pdfErr) {
+      console.error(`\n\u2717 Failed to generate test report: ${pdfErr}`);
+    }
     if (result.success) {
       console.log(`PASS (run #${result.runId} of test #${result.testId})`);
       return 0;

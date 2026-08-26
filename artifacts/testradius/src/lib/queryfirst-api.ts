@@ -510,3 +510,35 @@ export function startTrainRun(
 ): Promise<void> {
   return streamPost(`/trains/${trainId}/run`, {}, callbacks);
 }
+
+// ----- PDF report download ---------------------------------------------------
+
+export async function downloadRunReportPdf(runId: number): Promise<void> {
+  const token = await getAuthToken();
+  const res = await fetch(`${API_BASE}/runs/${runId}/report.pdf`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `report-run-${runId}.pdf`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function downloadSuiteRunReportPdf(suiteRunId: number): Promise<void> {
+  const token = await getAuthToken();
+  const res = await fetch(`${API_BASE}/suite-runs/${suiteRunId}/report.pdf`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `report-suite-${suiteRunId}.pdf`;
+  a.click();
+  URL.revokeObjectURL(url);
+}

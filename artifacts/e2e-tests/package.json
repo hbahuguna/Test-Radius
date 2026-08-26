@@ -16,5 +16,8 @@
     "monocart-coverage-reports": "^2.12.12",
     "typescript": "~5.9.2",
     "zod": "catalog:"
+  },
+  "dependencies": {
+    "@workspace/report-gen": "workspace:*"
   }
 }

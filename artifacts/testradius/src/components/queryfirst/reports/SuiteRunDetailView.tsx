@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getSuiteRun, type QfSuiteRun } from "@/lib/queryfirst-api";
+import { getSuiteRun, downloadSuiteRunReportPdf, type QfSuiteRun } from "@/lib/queryfirst-api";
 import { RunStatusBadge } from "./RunStatusBadge";
 import { fmtDuration, fmtTime } from "./format";
+import { Download } from "lucide-react";
+import { toast } from "sonner";
 
 export function SuiteRunDetailView({
   suiteRunId,
@@ -48,6 +50,13 @@ export function SuiteRunDetailView({
         <span className="font-mono">run #{suiteRun.id}</span>
         {suiteRun.trainRunId !== null && <span>from train run #{suiteRun.trainRunId}</span>}
         <span className="ml-auto">{fmtTime(suiteRun.startedAt)} → {fmtTime(suiteRun.finishedAt)} ({fmtDuration(suiteRun.startedAt, suiteRun.finishedAt)})</span>
+        <button
+          onClick={() => downloadSuiteRunReportPdf(suiteRun.id).catch((err) => toast.error(`Download failed: ${err.message}`))}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+          title="Download PDF report"
+        >
+          <Download className="size-3.5" />
+        </button>
       </div>
 
       {typeof suiteRun.error === "string" && suiteRun.error && (
