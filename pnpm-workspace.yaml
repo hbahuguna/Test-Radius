@@ -6,6 +6,7 @@ packages:
 
 allowBuilds:
   '@google/genai': true
+  '@modelcontextprotocol/inspector': set this to true or false
   better-sqlite3: true
   bufferutil: true
   core-js: false

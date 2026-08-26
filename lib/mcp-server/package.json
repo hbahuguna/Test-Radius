@@ -1,0 +1,26 @@
+{
+  "name": "@workspace/mcp-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "testradius-mcp": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit 2>&1 > /tmp/mcp-tscheck.txt; grep -E '^src/' /tmp/mcp-tscheck.txt; [ $? -ne 0 ]",
+    "test:cli": "./node_modules/.bin/mcp-inspector --cli ./node_modules/.bin/tsx src/index.ts",
+    "debug": "./node_modules/.bin/mcp-inspector ./node_modules/.bin/tsx src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@workspace/nlp-runner": "workspace:*",
+    "@workspace/report-gen": "workspace:*",
+    "tsx": "catalog:",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/inspector": "2.1.0",
+    "@types/node": "catalog:",
+    "typescript": "~5.9.2"
+  }
+}
