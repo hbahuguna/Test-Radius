@@ -1,6 +1,6 @@
 import { db } from "@workspace/db";
 import { usersTable, creditLedgerTable, couponsTable, couponRedemptionsTable } from "@workspace/db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, gte, sql } from "drizzle-orm";
 import type { AuthedUser } from "../middlewares/auth";
 import { logger } from "../lib/logger";
 
@@ -10,7 +10,7 @@ export class CouponError extends Error {
   }
 }
 
-const FREE_SIGNUP_CREDITS = 20;
+const FREE_SIGNUP_CREDITS = 10;
 
 export interface UserRecord {
   id: string;
@@ -33,83 +33,137 @@ export interface UserRecord {
  * user who has never signed up will NOT be provisioned and `null` is returned,
  * forcing the caller to reject with "sign up first".
  */
+export class DatabaseUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DatabaseUnavailableError";
+  }
+}
+
 export async function getOrCreateUser(
   authUser: AuthedUser,
   opts?: { allowCreate?: boolean },
 ): Promise<UserRecord | null> {
   const allowCreate = opts?.allowCreate ?? true;
 
-  const existing = await db
-    .select()
-    .from(usersTable)
-    .where(eq(usersTable.id, authUser.id))
-    .limit(1);
+  try {
+    const existing = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.id, authUser.id))
+      .limit(1);
 
-  if (existing.length > 0) {
-    const u = existing[0];
-    // Touch last_login
-    await db
-      .update(usersTable)
-      .set({ lastLogin: new Date(), email: authUser.email || u.email })
-      .where(eq(usersTable.id, u.id));
-    return toRecord(u);
+    if (existing.length > 0) {
+      const u = existing[0];
+      await db
+        .update(usersTable)
+        .set({ lastLogin: new Date(), email: authUser.email || u.email })
+        .where(eq(usersTable.id, u.id));
+      return toRecord(u);
+    }
+
+    if (!allowCreate) {
+      return null;
+    }
+
+    const [created] = await db
+      .insert(usersTable)
+      .values({
+        id: authUser.id,
+        email: authUser.email,
+        fullName: authUser.fullName,
+        avatarUrl: authUser.avatarUrl,
+        creditsRemaining: FREE_SIGNUP_CREDITS,
+        creditsUsed: 0,
+        plan: "free",
+        modelProvider: "built-in",
+        lastLogin: new Date(),
+      })
+      .returning();
+
+    await db.insert(creditLedgerTable).values({
+      userId: created.id,
+      amount: FREE_SIGNUP_CREDITS,
+      reason: "signup_bonus",
+    });
+
+    logger.info({ userId: created.id }, "Provisioned new user with free credits");
+    return toRecord(created);
+  } catch (err) {
+    const message = (err as Error)?.message ?? String(err);
+    logger.error({ err: message, userId: authUser.id }, "Database error in getOrCreateUser");
+    throw new DatabaseUnavailableError(
+      "Unable to reach the database. If this is a development environment, the Supabase database may be paused — resume it at https://supabase.com/dashboard.",
+    );
   }
-
-  if (!allowCreate) {
-    // Login attempt for an account that was never signed up.
-    return null;
-  }
-
-  // Provision new user with free credits
-  const [created] = await db
-    .insert(usersTable)
-    .values({
-      id: authUser.id,
-      email: authUser.email,
-      fullName: authUser.fullName,
-      avatarUrl: authUser.avatarUrl,
-      creditsRemaining: FREE_SIGNUP_CREDITS,
-      creditsUsed: 0,
-      plan: "free",
-      modelProvider: "built-in",
-      lastLogin: new Date(),
-    })
-    .returning();
-
-  await db.insert(creditLedgerTable).values({
-    userId: created.id,
-    amount: FREE_SIGNUP_CREDITS,
-    reason: "signup_bonus",
-  });
-
-  logger.info({ userId: created.id }, "Provisioned new user with free credits");
-  return toRecord(created);
 }
 
 /**
- * Deduct one credit from a user. Returns false if insufficient credits.
+ * Deduct credits from a user. Returns false if the user does not exist or has
+ * an insufficient balance.
+ *
+ * The decrement and the balance guard happen in a single UPDATE so concurrent
+ * requests can't both pass the check and overdraw the account.
  */
-export async function deductCredit(userId: string, reason: string, runId?: string): Promise<boolean> {
-  const user = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
-  if (user.length === 0) return false;
-  if (user[0].creditsRemaining < 1) return false;
+export async function deductCredit(
+  userId: string,
+  reason: string,
+  runId?: string,
+  amount = 1,
+): Promise<boolean> {
+  if (amount < 1) return true;
 
-  await db
+  const updated = await db
     .update(usersTable)
     .set({
-      creditsRemaining: user[0].creditsRemaining - 1,
-      creditsUsed: user[0].creditsUsed + 1,
+      creditsRemaining: sql`${usersTable.creditsRemaining} - ${amount}`,
+      creditsUsed: sql`${usersTable.creditsUsed} + ${amount}`,
     })
-    .where(eq(usersTable.id, userId));
+    .where(and(eq(usersTable.id, userId), gte(usersTable.creditsRemaining, amount)))
+    .returning({ creditsRemaining: usersTable.creditsRemaining });
+
+  if (updated.length === 0) return false;
 
   await db.insert(creditLedgerTable).values({
     userId,
-    amount: -1,
+    amount: -amount,
     reason,
     runId,
   });
 
   return true;
+}
+
+/**
+ * Give credits back to a user after a failed run. Counterpart to
+ * deductCredit — mirrors the original charge into the ledger so the running
+ * balance stays auditable.
+ */
+export async function refundCredits(
+  userId: string,
+  reason: string,
+  runId?: string,
+  amount = 1,
+): Promise<void> {
+  if (amount < 1) return;
+
+  const updated = await db
+    .update(usersTable)
+    .set({
+      creditsRemaining: sql`${usersTable.creditsRemaining} + ${amount}`,
+      creditsUsed: sql`GREATEST(0, ${usersTable.creditsUsed} - ${amount})`,
+    })
+    .where(eq(usersTable.id, userId))
+    .returning({ creditsRemaining: usersTable.creditsRemaining });
+
+  if (updated.length === 0) return;
+
+  await db.insert(creditLedgerTable).values({
+    userId,
+    amount,
+    reason,
+    runId,
+  });
 }
 
 /**

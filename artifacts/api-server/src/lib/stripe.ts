@@ -9,7 +9,11 @@ export function getStripe(): Stripe {
     if (!key) {
       throw new Error("STRIPE_SECRET_KEY is not configured");
     }
-    _stripe = new Stripe(key, { apiVersion: "2025-09-30 CL" as Stripe.LatestApiVersion });
+    // Deliberately no apiVersion override: the SDK pins the version it was
+    // generated against, so it stays correct across SDK upgrades. Hardcoding it
+    // is a trap — a stale literal fails at runtime while `as LatestApiVersion`
+    // keeps tsc quiet.
+    _stripe = new Stripe(key);
   }
   return _stripe;
 }

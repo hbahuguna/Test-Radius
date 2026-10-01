@@ -172,14 +172,25 @@ export async function requireSignedUp(req: Request, res: Response, next: NextFun
 
   // Auto-provision the user row if it doesn't exist yet (e.g. OAuth redirect
   // happened before the DB was ready, or the user is returning on a new device).
-  const { getOrCreateUser } = await import("../lib/auth");
-  const record = await getOrCreateUser(user, { allowCreate: true });
-  if (!record) {
-    res.status(500).json({
-      error: "provision_failed",
-      message: "Could not provision user account. Please try again.",
-    });
-    return;
+  const { getOrCreateUser, DatabaseUnavailableError } = await import("../lib/auth");
+  try {
+    const record = await getOrCreateUser(user, { allowCreate: true });
+    if (!record) {
+      res.status(500).json({
+        error: "provision_failed",
+        message: "Could not provision user account. Please try again.",
+      });
+      return;
+    }
+  } catch (err) {
+    if (err instanceof DatabaseUnavailableError) {
+      res.status(503).json({
+        error: "database_unavailable",
+        message: "Unable to reach the database. Please try again in a moment.",
+      });
+      return;
+    }
+    throw err;
   }
 
   req.user = user;

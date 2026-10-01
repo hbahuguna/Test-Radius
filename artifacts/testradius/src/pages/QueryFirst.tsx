@@ -7,8 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ModelSelector, defaultModelFor } from "@/components/tester/ModelSelector";
-import { type UserApiKey } from "@/lib/agentic-api";
 import {
   startRecord,
   startReplay,
@@ -16,6 +14,8 @@ import {
   stopRun,
   listTests,
   listRuns,
+  getCredits,
+  devGrantCredits,
   deleteTest,
   deleteStep,
   patchStep,
@@ -27,7 +27,9 @@ import {
   type QfEvent,
   type QfTestStep,
   type QfAssertion,
+  type QfCredits,
 } from "@/lib/queryfirst-api";
+import { startCheckout } from "@/lib/agentic-api";
 import { SuitesPanel } from "@/components/queryfirst/SuitesPanel";
 import { TrainsPanel } from "@/components/queryfirst/TrainsPanel";
 import { ApiTestsPanel } from "@/components/queryfirst/ApiTestsPanel";
@@ -76,9 +78,8 @@ export function QueryFirst() {
   const [entryUrl, setEntryUrl] = useState("http://localhost:3123/signup");
   const [variables, setVariables] = useState('{"name":"Ada","email":"ada@example.com"}');
   const [skipDryRun, setSkipDryRun] = useState(true);
-  const [provider, setProvider] = useState("google");
-  const [modelId, setModelId] = useState(defaultModelFor("google"));
-  const [keys, setKeys] = useState<UserApiKey[]>([]);
+  const [credits, setCredits] = useState<QfCredits | null>(null);
+  const [granting, setGranting] = useState(false);
 
   // Run state
   const [mode, setMode] = useState<Mode>("idle");
@@ -101,12 +102,11 @@ export function QueryFirst() {
   const activeModeRef = useRef<Exclude<Mode, "idle"> | null>(null);
   const screenshotTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Load API keys + tests on mount
+  // Load credits + tests on mount
   useEffect(() => {
     const load = async () => {
       try {
-        const k = await import("@/lib/agentic-api").then((m) => m.getApiKeys());
-        setKeys(k);
+        setCredits(await getCredits());
       } catch { /* */ }
       try {
         const res = await listTests();
@@ -302,6 +302,43 @@ export function QueryFirst() {
     }
   }, [addStep, refreshTests]);
 
+  const refreshCredits = useCallback(async () => {
+    try { setCredits(await getCredits()); } catch { /* */ }
+  }, []);
+
+  // Negative amount drains, so the low-balance Buy Credits state is reachable.
+  const handleDevGrant = async (amount: number) => {
+    setGranting(true);
+    try {
+      const res = await devGrantCredits(amount);
+      setCredits((c) => (c ? { ...c, credits_remaining: res.credits_remaining, credits_used: res.credits_used } : c));
+      if (res.granted === 0) {
+        toast.info("Nothing to drain — balance is already 0");
+      } else {
+        toast.success(
+          `${res.granted > 0 ? "Added" : "Removed"} ${Math.abs(res.granted)} credits`,
+        );
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not adjust credits");
+    } finally {
+      setGranting(false);
+    }
+  };
+
+  const handleBuyCredits = async () => {
+    if (!credits) return;
+    if (!credits.stripe_configured) {
+      toast.error("Stripe is not configured. Add STRIPE_SECRET_KEY and a real price id to enable checkout.");
+      return;
+    }
+    try {
+      await startCheckout(credits.price_credit_pack_10, "/queryfirst");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Checkout failed");
+    }
+  };
+
   const handleStartRecord = async () => {
     if (!query.trim()) return;
     activeModeRef.current = "recording";
@@ -312,9 +349,7 @@ export function QueryFirst() {
     setCurrentMilestone(null);
     setRunResult(null);
     setScreenshot(null);
-    posthog.capture("queryfirst_record_started", {
-      model_provider: provider,
-    });
+    posthog.capture("queryfirst_record_started");
 
     let vars: Record<string, string> = {};
     try { vars = JSON.parse(variables); } catch { /* ignore malformed */ }
@@ -322,15 +357,17 @@ export function QueryFirst() {
     abortRef.current = new AbortController();
     try {
       await startRecord(
-        { query, entry_url: entryUrl, variables: vars, provider, model_id: modelId, skip_dry_run: skipDryRun },
+        { query, entry_url: entryUrl, variables: vars, skip_dry_run: skipDryRun },
         { onEvent: handleEvent, signal: abortRef.current.signal },
       );
+      await refreshCredits();
     } catch (err) {
       posthog.capture("queryfirst_record_completed", { success: false });
       activeModeRef.current = null;
       toast.error(err instanceof Error ? err.message : "Recording failed");
       setStatus("error");
       setMode("idle");
+      await refreshCredits();
     }
   };
 
@@ -345,7 +382,6 @@ export function QueryFirst() {
     setScreenshot(null);
     posthog.capture("queryfirst_replay_started", {
       healing_enabled: redesign,
-      model_provider: provider,
     });
 
     let vars: Record<string, string> = {};
@@ -360,17 +396,19 @@ export function QueryFirst() {
     abortRef.current = new AbortController();
     try {
       await startReplay(
-        { test_id: selectedTest, variables: vars, entry_url: replayEntryUrl, provider, model_id: modelId },
+        { test_id: selectedTest, variables: vars, entry_url: replayEntryUrl },
         { onEvent: handleEvent, signal: abortRef.current.signal },
       );
       // Refresh runs after replay
       listRuns(selectedTest).then((r) => setRuns(r.runs)).catch(() => {});
+      await refreshCredits();
     } catch (err) {
       posthog.capture("queryfirst_replay_completed", { success: false });
       activeModeRef.current = null;
       toast.error(err instanceof Error ? err.message : "Replay failed");
       setStatus("error");
       setMode("idle");
+      await refreshCredits();
     }
   };
 
@@ -392,22 +430,22 @@ export function QueryFirst() {
     setCurrentMilestone(null);
     setRunResult(null);
     setScreenshot(null);
-    posthog.capture("queryfirst_browse_started", {
-      model_provider: provider,
-    });
+    posthog.capture("queryfirst_browse_started");
 
     abortRef.current = new AbortController();
     try {
       await startBrowse(
-        { query, entry_url: entryUrl || undefined, provider, model_id: modelId },
+        { query, entry_url: entryUrl || undefined },
         { onEvent: handleEvent, signal: abortRef.current.signal },
       );
+      await refreshCredits();
     } catch (err) {
       posthog.capture("queryfirst_browse_completed", { success: false });
       activeModeRef.current = null;
       toast.error(err instanceof Error ? err.message : "Browse failed");
       setStatus("error");
       setMode("idle");
+      await refreshCredits();
     }
   };
 
@@ -655,15 +693,70 @@ const actionBadgeClass = (action: string) => {
             </Card>
 
             <Card>
-              <CardHeader><CardTitle className="text-sm">LLM Model (for recording / healing)</CardTitle></CardHeader>
-              <CardContent>
-                <ModelSelector
-                  provider={provider}
-                  modelId={modelId}
-                  onProviderChange={setProvider}
-                  onModelIdChange={setModelId}
-                  keys={keys}
-                />
+              <CardHeader>
+                <CardTitle className="text-sm flex items-center justify-between">
+                  Credits
+                  {credits && (
+                    <span className="text-xs font-normal text-muted-foreground">
+                      {credits.credits_per_run} per test
+                    </span>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-2xl font-semibold tabular-nums">
+                    {credits?.credits_remaining ?? "—"}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {credits
+                      ? `≈ ${Math.floor(credits.credits_remaining / credits.credits_per_run)} test${credits.credits_remaining >= credits.credits_per_run * 2 ? "s" : ""} left`
+                      : " "}
+                  </span>
+                </div>
+                {credits && credits.credits_remaining < credits.credits_per_run && (
+                  <Button
+                    size="sm"
+                    className="w-full"
+                    onClick={handleBuyCredits}
+                    title={
+                      credits.stripe_configured
+                        ? undefined
+                        : "Stripe is not configured on this server"
+                    }
+                  >
+                    Buy Credits
+                  </Button>
+                )}
+                {credits?.dev_grant_enabled && (
+                  <div className="space-y-1.5 border-t pt-3">
+                    <p className="text-xs text-muted-foreground">Local testing only</p>
+                    <div className="flex gap-2">
+                      {[10, 50].map((n) => (
+                        <Button
+                          key={n}
+                          size="sm"
+                          variant="outline"
+                          className="flex-1"
+                          disabled={granting}
+                          onClick={() => handleDevGrant(n)}
+                        >
+                          +{n} credits
+                        </Button>
+                      ))}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1"
+                        disabled={granting}
+                        title="Drain credits to exercise the low-balance Buy Credits state"
+                        onClick={() => handleDevGrant(-10)}
+                      >
+                        &minus;10 credits
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

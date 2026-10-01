@@ -151,8 +151,14 @@ export function resolveChromePath(chromePath: string): string {
     if (pathBinary) return pathBinary;
   }
 
-  // 2. Fall back to cached Playwright browsers and standard paths
-  for (const candidate of [...cachedChromeCandidates(), ...CHROME_CANDIDATES]) {
+  // 2. Try standard installed browsers (real Chrome/Chromium apps) next —
+  //    cached bundles can be stale or corrupt, so a real install wins.
+  for (const candidate of CHROME_CANDIDATES) {
+    if (existsSync(candidate)) return candidate;
+  }
+
+  // 3. Fall back to cached Playwright/Puppeteer browser bundles
+  for (const candidate of cachedChromeCandidates()) {
     if (existsSync(candidate)) return candidate;
   }
   return "";

@@ -18,6 +18,33 @@ const router: IRouter = Router();
 router.use(requireSignedUp);
 
 /**
+ * Absolute base URL for Stripe redirect targets.
+ *
+ * Stripe rejects relative success/cancel URLs outright, so a missing Origin
+ * header (curl, some proxies, server-to-server callers) used to fail checkout
+ * with url_invalid. APP_ORIGIN is the deliberate, configured value; the Origin
+ * header is only a fallback, and is restricted to http(s) so it cannot be used
+ * to smuggle a javascript: URL into the redirect.
+ */
+function redirectBase(req: Request): string {
+  const configured = process.env.APP_ORIGIN?.trim().replace(/\/+$/, "");
+  if (configured) return configured;
+
+  const origin = req.headers.origin;
+  if (typeof origin === "string" && /^https?:\/\//i.test(origin)) {
+    return origin.replace(/\/+$/, "");
+  }
+  return "";
+}
+
+/** Only same-site absolute paths are honored, so `returnTo` can't leave the app. */
+function safeReturnTo(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  if (!value.startsWith("/") || value.startsWith("//")) return fallback;
+  return value;
+}
+
+/**
  * POST /api/billing/checkout
  * Create a Stripe Checkout session for a credit pack or subscription.
  */
@@ -42,12 +69,16 @@ router.post("/checkout", async (req: Request, res: Response) => {
       .where(eq(usersTable.id, user.id));
 
     const mode = isSubscriptionPrice(priceId) ? "subscription" : "payment";
+    // Credit packs can be bought from any page, so return the buyer to wherever
+    // they started instead of hardcoding /tester.
+    const base = redirectBase(req);
+    const returnTo = safeReturnTo(req.body?.returnTo, "/tester");
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode,
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${req.headers.origin || ""}/tester?checkout=success`,
-      cancel_url: `${req.headers.origin || ""}/tester?checkout=cancelled`,
+      success_url: `${base}${returnTo}?checkout=success`,
+      cancel_url: `${base}${returnTo}?checkout=cancelled`,
       metadata: { userId: user.id },
     });
 
@@ -73,7 +104,7 @@ router.post("/portal", async (req: Request, res: Response) => {
     const stripe = getStripe();
     const session = await stripe.billingPortal.sessions.create({
       customer: user.stripeCustomerId,
-      return_url: `${req.headers.origin || ""}/settings`,
+      return_url: `${redirectBase(req)}/settings`,
     });
     res.json({ url: session.url });
   } catch (err) {
@@ -109,17 +140,26 @@ router.post("/webhook", async (req: Request, res: Response) => {
       case "checkout.session.completed": {
         const session = event.data.object as import("stripe").Stripe.Checkout.Session;
         const userId = session.metadata?.userId;
-        if (userId && session.mode === "payment" && session.line_items) {
-          // Resolve credits from the purchased price
+        // Guard on mode only. Do NOT require session.line_items here: the
+        // webhook payload embeds the session without that field populated
+        // (it is only present when explicitly expanded), so gating on it
+        // silently skipped every real purchase and never granted credits.
+        if (userId && session.mode === "payment" && session.payment_status === "paid") {
           const lineItems = await stripe.checkout.sessions.listLineItems(session.id);
           const priceId = lineItems.data[0]?.price?.id;
-          if (priceId) {
-            const credits = creditsForPrice(priceId);
-            if (credits) {
-              await addCredits(userId, credits, "purchase");
-              logger.info({ userId, credits }, "Added purchased credits");
-            }
+          if (!priceId) {
+            logger.warn({ sessionId: session.id }, "checkout.session.completed had no line items");
+            break;
           }
+          const credits = creditsForPrice(priceId);
+          if (!credits) {
+            // An unmapped price means we cannot know what was bought; granting
+            // a guess would be wrong, so surface it loudly instead.
+            logger.error({ priceId, sessionId: session.id }, "purchased price not in CREDIT_PACKS");
+            break;
+          }
+          await addCredits(userId, credits, "purchase");
+          logger.info({ userId, credits, priceId }, "Added purchased credits");
         }
         break;
       }

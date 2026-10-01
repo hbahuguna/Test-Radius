@@ -217,7 +217,7 @@ export async function deleteApiKey(id: number): Promise<void> {
   await customFetch<{ deleted: boolean }>(`/api/keys/${id}`, { method: "DELETE" });
 }
 
-export async function startCheckout(priceId: string): Promise<void> {
+export async function startCheckout(priceId: string, returnTo?: string): Promise<void> {
   const token = await getSessionToken();
   const res = await fetch("/api/billing/checkout", {
     method: "POST",
@@ -225,7 +225,7 @@ export async function startCheckout(priceId: string): Promise<void> {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ priceId }),
+    body: JSON.stringify({ priceId, ...(returnTo ? { returnTo } : {}) }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

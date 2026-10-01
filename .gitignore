@@ -65,6 +65,10 @@ test-reports/
 .env*
 !.env.example
 
+# Editor swap files (can contain secrets from the buffer they mirror)
+*.swp
+*.swo
+
 # Virtual environments
 .venv
 .venv/
@@ -72,6 +76,7 @@ venv/
 
 # Build artifacts
 artifacts/api-server/logs/
+artifacts/api-server/src/logs/
 artifacts/e2e-tests/coverage/
 
 # FieldServe runtime data

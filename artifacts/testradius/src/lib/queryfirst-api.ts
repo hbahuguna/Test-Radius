@@ -213,7 +213,7 @@ export interface QfModelOutput {
 }
 
 export type QfEvent =
-  | { event: "started"; kind: "record" | "replay" | "browse" | "suite" | "train"; testId?: number; testName?: string; stepCount?: number; suiteId?: number; suiteName?: string; trainId?: number; trainName?: string }
+  | { event: "started"; kind: "record" | "replay" | "browse" | "suite" | "train"; testId?: number; testName?: string; stepCount?: number; suiteId?: number; suiteName?: string; trainId?: number; trainName?: string; creditsCharged?: number }
   | { event: "record"; type: "milestones"; milestones: string[] }
   | { event: "record"; type: "plan"; turn: number; currentMilestone?: string; actions?: unknown[]; done?: boolean; hint?: string }
   | { event: "record"; type: "step"; turn: number; stepIndex: number; action: QfActionTrace[]; ok?: boolean; error?: string; url?: string; title?: string; screenshot?: string | null; thinking?: string | null; nextGoal?: string | null; memory?: string | null }
@@ -232,7 +232,7 @@ export type QfEvent =
   | { event: "train"; type: "suite-done"; trainRunId: number; suiteRunId: number; success: boolean; error?: string }
   | { event: "train"; type: "done"; trainRunId: number; success: boolean; error?: string }
   | { event: "done"; ok: boolean; testId?: number; testName?: string; report?: unknown; runId?: number; error?: string; llmCalls?: number; selfHealed?: number; suiteRunId?: number; trainRunId?: number; status?: string }
-  | { event: "error"; message: string };
+  | { event: "error"; message: string; code?: string };
 
 // ----- REST helpers ----------------------------------------------------------
 
@@ -322,6 +322,34 @@ export interface QfActiveRun {
 
 export async function getActiveRun(): Promise<{ active: QfActiveRun | null }> {
   return authedFetch<{ active: QfActiveRun | null }>("/active-run");
+}
+
+export interface QfCredits {
+  credits_remaining: number;
+  credits_used: number;
+  credits_per_run: number;
+  /** True only when the server allows the local-testing top-up buttons. */
+  dev_grant_enabled: boolean;
+  /** Stripe price id the Buy Credits button should check out. */
+  price_credit_pack_10: string;
+  /** False when STRIPE_SECRET_KEY is unset, so checkout cannot succeed. */
+  stripe_configured: boolean;
+  platform_model: string | null;
+}
+
+export async function getCredits(): Promise<QfCredits> {
+  return authedFetch<QfCredits>("/credits");
+}
+
+/**
+ * Local testing only. 404s unless the server has dev credits enabled.
+ * Pass a negative amount to drain credits (clamped at zero server-side).
+ */
+export async function devGrantCredits(amount: number): Promise<QfCredits & { granted: number }> {
+  return authedFetch<QfCredits & { granted: number }>("/credits/dev-grant", {
+    method: "POST",
+    body: JSON.stringify({ amount }),
+  });
 }
 
 // ----- SSE streaming ---------------------------------------------------------

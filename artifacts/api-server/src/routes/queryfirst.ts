@@ -5,7 +5,7 @@ import { db } from "@workspace/db";
 import { userApiKeysTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import { requireSignedUp, type AuthedUser } from "../middlewares/auth";
-import { getOrCreateUser } from "../lib/auth";
+import { getOrCreateUser, deductCredit, refundCredits, addCredits } from "../lib/auth";
 import { decryptKey } from "../lib/crypto";
 import { logger } from "../lib/logger";
 import { getFieldServeDb, FieldServeDataStore } from "../lib/fieldserve-db";
@@ -122,6 +122,53 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   google: "gemini-3.5-flash",
 };
 
+/** Credits charged per record / replay / browse run. 10 free credits = 5 runs. */
+const CREDITS_PER_RUN = 2;
+
+/** Upper bound on /browse agent steps — the single most expensive call. */
+const BROWSE_MAX_STEPS = 20;
+
+/** Upper bound on /record agent steps. Higher than browse since a recording has
+ * to finish the whole task to produce a replayable test. */
+const RECORD_MAX_STEPS = 40;
+
+/**
+ * Dev-only credit top-up. Double gated: an explicit opt-in env var AND a
+ * non-production NODE_ENV, so a stray QF_DEV_CREDITS in a deployed Replit still
+ * cannot mint credits for anyone who finds the endpoint.
+ */
+const DEV_CREDITS_ENABLED =
+  process.env.NODE_ENV !== "production" && process.env.QF_DEV_CREDITS === "true";
+
+/**
+ * Stripe price id for the "buy credits" button. Served to the client instead of
+ * being hardcoded there: once STRIPE_PRICE_CREDIT_PACK_10 holds a real Stripe id
+ * the placeholder key is no longer in CREDIT_PACKS, so a client-sent
+ * "price_credit_pack_10" would both fail at Stripe and credit nothing on the
+ * webhook. The server stays the single source of truth for its own config.
+ */
+const CREDIT_PACK_PRICE_ID =
+  process.env.STRIPE_PRICE_CREDIT_PACK_10?.trim() || "price_credit_pack_10";
+
+/** True only when Stripe is actually usable, so the UI can explain itself
+ * instead of firing a request that is guaranteed to 500. */
+const STRIPE_CONFIGURED = Boolean(process.env.STRIPE_SECRET_KEY?.trim());
+
+/** Cap a single dev grant so a fat-fingered amount cannot run away. */
+const DEV_GRANT_MAX = 100;
+
+/** Same cap for a dev drain (removing credits to exercise low-balance UI). */
+const DEV_DRAIN_MAX = 100;
+
+/**
+ * The platform Google key that pays for credit-metered runs. When set, the
+ * user never sees a provider picker: we serve Gemini on our own key and bill
+ * their credit balance.
+ */
+function platformGoogleKey(): string {
+  return (process.env.QF_GOOGLE_API_KEY ?? process.env.GOOGLE_API_KEY ?? "").trim();
+}
+
 interface LlmConfig {
   baseUrl: string;
   apiKey: string;
@@ -129,10 +176,28 @@ interface LlmConfig {
   provider: string;
 }
 
+/**
+ * Resolve the LLM config for a QueryFirst run.
+ *
+ * Platform mode (QF_GOOGLE_API_KEY set) takes precedence and pins every run to
+ * Gemini on our key, so credit accounting always matches the key we are billed
+ * for. Otherwise falls back to the user's BYOK key so existing setups keep
+ * working.
+ */
 async function resolveLlmConfig(
   authUser: AuthedUser,
   body: { provider?: string; model_id?: string; api_key?: string },
 ): Promise<LlmConfig | { error: string }> {
+  const platformKey = platformGoogleKey();
+  if (platformKey) {
+    return {
+      baseUrl: PROVIDER_BASE_URLS.google,
+      apiKey: platformKey,
+      model: process.env.QF_GOOGLE_MODEL?.trim() || PROVIDER_DEFAULT_MODELS.google,
+      provider: "google",
+    };
+  }
+
   const provider = body.provider ?? "poolside";
   const model = body.model_id ?? PROVIDER_DEFAULT_MODELS[provider] ?? "";
   const baseUrl = PROVIDER_BASE_URLS[provider];
@@ -157,6 +222,20 @@ async function resolveLlmConfig(
     return { error: `No API key found for provider "${provider}". Add one in Settings or pass api_key in the request.` };
   }
   return { baseUrl, apiKey, model, provider };
+}
+
+/**
+ * Charge a run to the user's credit balance. Returns false when the balance is
+ * too low; the caller surfaces that as an `insufficient_credits` SSE error
+ * (these routes have already committed to a 200 + SSE stream).
+ */
+async function chargeRun(
+  authUser: AuthedUser,
+  reason: string,
+  amount = CREDITS_PER_RUN,
+): Promise<boolean> {
+  const user = (await getOrCreateUser(authUser))!;
+  return deductCredit(user.id, reason, undefined, amount);
 }
 
 // ----- SSE helpers -----------------------------------------------------------
@@ -765,6 +844,95 @@ router.get("/tests", async (_req: Request, res: Response) => {
   }
 });
 
+// GET /queryfirst/credits — balance + the per-run cost the UI shows next to it
+router.get("/credits", async (req: Request, res: Response) => {
+  try {
+    const user = (await getOrCreateUser(req.user!))!;
+    res.json({
+      credits_remaining: user.creditsRemaining,
+      credits_used: user.creditsUsed,
+      credits_per_run: CREDITS_PER_RUN,
+      dev_grant_enabled: DEV_CREDITS_ENABLED,
+      price_credit_pack_10: CREDIT_PACK_PRICE_ID,
+      stripe_configured: STRIPE_CONFIGURED,
+      platform_model: platformGoogleKey()
+        ? process.env.QF_GOOGLE_MODEL?.trim() || PROVIDER_DEFAULT_MODELS.google
+        : null,
+    });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: credits lookup failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to load credits" });
+  }
+});
+
+// POST /queryfirst/credits/dev-grant — adjust the balance for local testing.
+// A positive amount tops up; a negative amount drains, clamped at the current
+// balance so a dev drain can never drive the account negative.
+// 404s unless DEV_CREDITS_ENABLED, so it does not exist in production.
+router.post("/credits/dev-grant", async (req: Request, res: Response) => {
+  if (!DEV_CREDITS_ENABLED) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  try {
+    const raw = Number((req.body ?? {}).amount);
+    if (!Number.isFinite(raw) || raw === 0) {
+      res.status(400).json({
+        error: "invalid_amount",
+        message: "amount must be a non-zero number (negative to drain)",
+      });
+      return;
+    }
+
+    const user = (await getOrCreateUser(req.user!))!;
+
+    if (raw > 0) {
+      const amount = Math.floor(Math.min(raw, DEV_GRANT_MAX));
+      await addCredits(user.id, amount, "dev_grant");
+      logger.warn({ userId: user.id, amount }, "queryfirst: dev credit grant");
+
+      const refreshed = (await getOrCreateUser(req.user!))!;
+      res.json({
+        granted: amount,
+        credits_remaining: refreshed.creditsRemaining,
+        credits_used: refreshed.creditsUsed,
+        credits_per_run: CREDITS_PER_RUN,
+        dev_grant_enabled: true,
+      });
+      return;
+    }
+
+    // Drain: never below zero, so runs still correctly report insufficient credits.
+    const requested = Math.floor(Math.min(Math.abs(raw), DEV_DRAIN_MAX));
+    const drain = Math.min(requested, user.creditsRemaining);
+    if (drain <= 0) {
+      res.json({
+        granted: 0,
+        credits_remaining: user.creditsRemaining,
+        credits_used: user.creditsUsed,
+        credits_per_run: CREDITS_PER_RUN,
+        dev_grant_enabled: true,
+      });
+      return;
+    }
+
+    await deductCredit(user.id, "dev_drain", undefined, drain);
+    logger.warn({ userId: user.id, drain }, "queryfirst: dev credit drain");
+
+    const refreshed = (await getOrCreateUser(req.user!))!;
+    res.json({
+      granted: -drain,
+      credits_remaining: refreshed.creditsRemaining,
+      credits_used: refreshed.creditsUsed,
+      credits_per_run: CREDITS_PER_RUN,
+      dev_grant_enabled: true,
+    });
+  } catch (err) {
+    logger.error({ err }, "queryfirst: dev credit grant failed");
+    res.status(500).json({ error: "internal_error", message: "Failed to adjust credits" });
+  }
+});
+
 // GET /queryfirst/runs/:testId — run history for a test
 router.get("/runs/:testId", async (req: Request, res: Response) => {
   try {
@@ -1031,7 +1199,7 @@ router.get("/active-run", async (req: Request, res: Response) => {
 // POST /queryfirst/record — SSE: record a new test using browser-use agent + shadow CDP recorder
 router.post("/record", async (req: Request, res: Response) => {
   const authUser = req.user!;
-  const { query, entry_url, variables, model_id, provider, api_key, use_vision, max_steps, skip_dry_run } = req.body ?? {};
+  const { query, entry_url, variables, api_key, use_vision, max_steps, skip_dry_run } = req.body ?? {};
 
   if (!query || typeof query !== "string") {
     res.status(400).json({ error: "invalid_request", message: "query is required" });
@@ -1053,11 +1221,24 @@ router.post("/record", async (req: Request, res: Response) => {
     res.end();
     return;
   }
+
+  const charged = await chargeRun(authUser, "qf_record");
+  if (!charged) {
+    sseHeaders(res);
+    sseWrite(res, {
+      event: "error",
+      code: "insufficient_credits",
+      message: `This test costs ${CREDITS_PER_RUN} credits. Buy more to keep recording.`,
+    });
+    res.end();
+    return;
+  }
+
   active.stopped = false;
   active.kind = "record";
 
   sseHeaders(res);
-  sseWrite(res, { event: "started", kind: "record" });
+  sseWrite(res, { event: "started", kind: "record", creditsCharged: CREDITS_PER_RUN });
 
   const store = getStore();
 
@@ -1110,8 +1291,8 @@ router.post("/record", async (req: Request, res: Response) => {
         body: JSON.stringify({
           url: entry_url ?? "about:blank",
           goal: buildGoalWithVariables(query, variables),
-          model_id: model_id ?? llmCfg.model,
-          max_steps: max_steps ?? 50,
+          model_id: llmCfg.model,
+          max_steps: Math.min(Math.max(Number(max_steps) || RECORD_MAX_STEPS, 1), RECORD_MAX_STEPS),
           model_provider: provider,
           poolside_api_key: llmCfg.apiKey,
           api_key: llmCfg.apiKey, // Generic API key for any OpenAI-compatible provider
@@ -1291,6 +1472,11 @@ router.post("/record", async (req: Request, res: Response) => {
     }
   } catch (err) {
     logger.error({ err }, "queryfirst: record failed");
+    // A thrown error is an infrastructure failure (Chrome refused to launch, the
+    // browser-use service is down). The user got no test, so give the credits
+    // back. An `error` SSE event from the agent itself still consumed tokens and
+    // is left charged.
+    await refundCredits((await getOrCreateUser(authUser))!.id, "qf_refund_record_failed", undefined, CREDITS_PER_RUN);
     const msg = err instanceof ChromeLaunchError ? CHROME_WARMING_UP_MSG : (err instanceof Error ? err.message : String(err));
     sseWrite(res, { event: "error", message: msg });
   } finally {
@@ -1505,11 +1691,31 @@ router.post("/replay", async (req: Request, res: Response) => {
     res.end();
     return;
   }
+
+  const charged = await chargeRun(authUser, "qf_replay");
+  if (!charged) {
+    sseHeaders(res);
+    sseWrite(res, {
+      event: "error",
+      code: "insufficient_credits",
+      message: `This test costs ${CREDITS_PER_RUN} credits. Buy more to keep testing.`,
+    });
+    res.end();
+    return;
+  }
+
   active.stopped = false;
   active.kind = "replay";
 
   sseHeaders(res);
-  sseWrite(res, { event: "started", kind: "replay", testId, testName: test.name, stepCount: test.steps.length });
+  sseWrite(res, {
+    event: "started",
+    kind: "replay",
+    testId,
+    testName: test.name,
+    stepCount: test.steps.length,
+    creditsCharged: CREDITS_PER_RUN,
+  });
 
   let browserSession: BrowserInstance | null = null;
 
@@ -1589,6 +1795,7 @@ router.post("/replay", async (req: Request, res: Response) => {
     await sleep(1000);
   } catch (err) {
     logger.error({ err }, "queryfirst: replay failed");
+    await refundCredits((await getOrCreateUser(authUser))!.id, "qf_refund_replay_failed", undefined, CREDITS_PER_RUN);
     const msg = err instanceof ChromeLaunchError ? CHROME_WARMING_UP_MSG : (err instanceof Error ? err.message : String(err));
     sseWrite(res, { event: "error", message: msg });
   } finally {
@@ -2476,11 +2683,24 @@ router.post("/browse", async (req: Request, res: Response) => {
     res.end();
     return;
   }
+
+  const charged = await chargeRun(authUser, "qf_browse");
+  if (!charged) {
+    sseHeaders(res);
+    sseWrite(res, {
+      event: "error",
+      code: "insufficient_credits",
+      message: `This costs ${CREDITS_PER_RUN} credits. Buy more to keep browsing.`,
+    });
+    res.end();
+    return;
+  }
+
   active.stopped = false;
   active.kind = "browse";
 
   sseHeaders(res);
-  sseWrite(res, { event: "started", kind: "browse" });
+  sseWrite(res, { event: "started", kind: "browse", creditsCharged: CREDITS_PER_RUN });
 
   let browserSession: BrowserInstance | null = null;
 
@@ -2509,10 +2729,14 @@ router.post("/browse", async (req: Request, res: Response) => {
       model: llmCfg.model,
     });
 
+    // Capped at BROWSE_MAX_STEPS: each step is a full accessibility-snapshot
+    // round trip, so an uncapped 50-step browse can cost several times what the
+    // 2 credits it charges are worth.
+    const stepCap = Math.min(Math.max(Number(max_steps) || BROWSE_MAX_STEPS, 1), BROWSE_MAX_STEPS);
     const agent = new LiveAgent({
       session: browserSession,
       llm,
-      maxSteps: max_steps ?? 50,
+      maxSteps: stepCap,
       maxActionsPerStep: max_actions ?? 3,
       onEvent: (ev: BrowseAgentEvent) => {
         if (active.stopped) return;
@@ -2530,6 +2754,7 @@ router.post("/browse", async (req: Request, res: Response) => {
     });
   } catch (err) {
     logger.error({ err }, "queryfirst: browse failed");
+    await refundCredits((await getOrCreateUser(authUser))!.id, "qf_refund_browse_failed", undefined, CREDITS_PER_RUN);
     const msg = err instanceof ChromeLaunchError ? CHROME_WARMING_UP_MSG : (err instanceof Error ? err.message : String(err));
     sseWrite(res, { event: "error", message: msg });
   } finally {

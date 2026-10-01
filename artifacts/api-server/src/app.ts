@@ -1,4 +1,4 @@
-import express, { type Express } from "express";
+import express, { type Express, type ErrorRequestHandler } from "express";
 import cors from "cors";
 import path from "path";
 import fs from "fs";
@@ -6,6 +6,7 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { recordingMiddleware } from "./lib/fieldserve-recorder";
+import { DatabaseUnavailableError } from "./lib/auth";
 
 const app: Express = express();
 
@@ -29,11 +30,15 @@ app.use(
   }),
 );
 app.use(cors());
+// Stripe webhook needs the raw request body for signature verification, so its
+// express.raw() parser MUST be mounted before express.json(). Otherwise json()
+// consumes the stream first, req.body arrives as a parsed object, and
+// constructEvent() rejects even a correctly signed payload.
+app.use("/api/billing/webhook", express.raw({ type: "application/json" }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Stripe webhook needs the raw request body for signature verification.
-app.use("/api/billing/webhook", express.raw({ type: "application/json" }));
 
 // Recording middleware must run BEFORE the router so it can wrap `res.send`
 // before route handlers emit the response. Scoped to /api/fieldserve so only
@@ -62,6 +67,20 @@ if (SPA_DIR) {
   });
   logger.info({ SPA_DIR }, "Serving static SPA from SPA_DIR");
 }
+
+const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
+  if (err instanceof DatabaseUnavailableError) {
+    res.status(503).json({
+      error: "database_unavailable",
+      message: "Unable to reach the database. Please try again in a moment.",
+    });
+    return;
+  }
+  logger.error({ err }, "Unhandled error");
+  res.status(500).json({ error: "internal_error", message: "Internal server error" });
+};
+
+app.use(errorHandler);
 
 export default app;
 
