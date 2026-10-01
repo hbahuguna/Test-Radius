@@ -26,3 +26,9 @@ Workspace secret existence is not proof that the current published server has th
 **Why:** Development checkout and signature verification succeeded, while the published server reported a missing Stripe API key. The production existence tool included shared keys even though the running deployment lacked them. Replit documentation identifies deployment secrets as a separate publishing configuration.
 
 **How to apply:** Have the user ensure both Stripe secrets are included under Publishing → Adjust settings before republishing. Verify a benign signed request against the published webhook before enabling it; do not rely only on the workspace or production existence flags.
+
+Verify the exact configured webhook endpoint ID, not only a matching URL and event list.
+
+**Why:** Stripe can contain an enabled endpoint and a disabled duplicate with identical URLs and events. A Dashboard confirmation by URL can refer to the enabled entry while checkout's readiness gate still inspects the disabled one.
+
+**How to apply:** Use read-only Stripe calls with the application's existing credentials to inspect the configured ID and find matching enabled live endpoints. Confirm the signing secret belongs to the chosen endpoint before correcting the ID; do not enable a disabled duplicate just to bypass the gate. A harmless signed probe proves the published server accepts the supplied signing secret, but does not independently prove which Stripe endpoint owns that secret. Republish after environment changes, checking for explicit Publishing overrides.
