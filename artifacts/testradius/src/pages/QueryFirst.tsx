@@ -90,6 +90,7 @@ export function QueryFirst() {
   const [granting, setGranting] = useState(false);
   const [buyOpen, setBuyOpen] = useState(false);
   const [checkingOut, setCheckingOut] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   // Run state
   const [mode, setMode] = useState<Mode>("idle");
@@ -340,14 +341,19 @@ export function QueryFirst() {
   const handleBuyCredits = async (priceId: string) => {
     if (!credits) return;
     if (!credits.stripe_configured) {
-      toast.error("Credit checkout is not configured yet. Contact support to enable purchases.");
+      const message = "Credit checkout is not configured yet. Contact support to enable purchases.";
+      setCheckoutError(message);
+      toast.error(message);
       return;
     }
+    setCheckoutError(null);
     setCheckingOut(priceId);
     try {
       await startCheckout(priceId, "/queryfirst");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Checkout failed");
+      const message = err instanceof Error ? err.message : "Checkout failed";
+      setCheckoutError(message);
+      toast.error(message);
       setCheckingOut(null);
     }
   };
@@ -731,7 +737,10 @@ const actionBadgeClass = (action: string) => {
                   <Button
                     size="sm"
                     className="w-full"
-                    onClick={() => setBuyOpen(true)}
+                    onClick={() => {
+                      setCheckoutError(null);
+                      setBuyOpen(true);
+                    }}
                     title={
                       credits.stripe_configured
                         ? undefined
@@ -799,6 +808,14 @@ const actionBadgeClass = (action: string) => {
                   {credits && credits.credit_packs.length === 0 && (
                     <p className="text-xs text-muted-foreground">
                       Credit packs are unavailable right now. Contact support.
+                    </p>
+                  )}
+                  {checkoutError && (
+                    <p
+                      role="alert"
+                      className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+                    >
+                      {checkoutError}
                     </p>
                   )}
                 </div>

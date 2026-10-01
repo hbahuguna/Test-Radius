@@ -7,6 +7,8 @@ const BROWSER_USE_URL = process.env.BROWSER_USE_URL ?? `http://localhost:${BROWS
 
 // Cached health state — re-checked every CACHE_TTL_MS so we never block on a stale flag.
 const CACHE_TTL_MS = 20_000; // re-check every 20 seconds at most
+const READY_POLL_INTERVAL_MS = 1_000;
+const READY_TIMEOUT_MS = 120_000;
 let _cachedReady: boolean | null = null;
 let _cacheExpiry = 0;
 let _externalService = false;
@@ -22,26 +24,59 @@ function isLocalBrowserUse(): boolean {
   }
 }
 
+async function probeBrowserUse(): Promise<boolean> {
+  try {
+    const res = await fetch(`http://localhost:${BROWSER_USE_PORT}/health`, {
+      signal: AbortSignal.timeout(1500),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Live health check — result is cached for CACHE_TTL_MS to keep latency low. */
 export async function isBrowserUseReady(): Promise<boolean> {
   // External service: treat as always ready (let the first real request surface errors).
-  if (_externalService) return true;
+  if (_externalService || !isLocalBrowserUse()) return true;
 
   const now = Date.now();
   if (_cachedReady !== null && now < _cacheExpiry) {
     return _cachedReady;
   }
 
-  try {
-    const res = await fetch(`http://localhost:${BROWSER_USE_PORT}/health`, {
-      signal: AbortSignal.timeout(1500),
-    });
-    _cachedReady = res.ok;
-  } catch {
-    _cachedReady = false;
-  }
+  _cachedReady = await probeBrowserUse();
   _cacheExpiry = Date.now() + CACHE_TTL_MS;
   return _cachedReady ?? false;
+}
+
+/**
+ * Wait for a local browser-use service to become healthy. Unlike the cached
+ * status check, this probes on every poll so a stale "not ready" result cannot
+ * hide a service that has just finished starting.
+ */
+export async function waitForBrowserUseReady(options: {
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+  shouldStop?: () => boolean;
+} = {}): Promise<boolean> {
+  if (_externalService || !isLocalBrowserUse()) return true;
+
+  const timeoutMs = Math.max(0, options.timeoutMs ?? READY_TIMEOUT_MS);
+  const pollIntervalMs = Math.max(1, options.pollIntervalMs ?? READY_POLL_INTERVAL_MS);
+  const deadline = Date.now() + timeoutMs;
+
+  while (true) {
+    if (options.shouldStop?.()) return false;
+    _cachedReady = await probeBrowserUse();
+    _cacheExpiry = Date.now() + CACHE_TTL_MS;
+    if (options.shouldStop?.()) return false;
+    if (_cachedReady) return true;
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return false;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, remainingMs)));
+  }
 }
 
 /**

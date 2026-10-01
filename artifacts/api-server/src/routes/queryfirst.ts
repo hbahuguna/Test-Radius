@@ -9,6 +9,7 @@ import { getOrCreateUser, deductCredit, refundCredits, addCredits } from "../lib
 import { creditPacks, anyCreditPackConfigured } from "../lib/stripe";
 import { decryptKey } from "../lib/crypto";
 import { logger } from "../lib/logger";
+import { waitForBrowserUseReady } from "../lib/browser-use-spawner";
 import { getFieldServeDb, FieldServeDataStore } from "../lib/fieldserve-db";
 import { API_SPEC } from "./fieldserve-ai";
 import OpenAI from "openai";
@@ -1238,9 +1239,35 @@ router.post("/record", async (req: Request, res: Response) => {
     return;
   }
 
+  // A newly deployed instance can accept API traffic before its bundled
+  // browser-use service has finished installing dependencies and listening.
+  // Keep the SSE connection alive while it warms up, and don't charge credits
+  // unless the service is ready to accept the run.
+  sseHeaders(res);
+  res.write(": waiting for browser automation service\n\n");
+  const keepAlive = setInterval(() => {
+    if (!res.destroyed) res.write(": waiting for browser automation service\n\n");
+  }, 10_000);
+  let browserUseReady = false;
+  try {
+    browserUseReady = await waitForBrowserUseReady({
+      shouldStop: () => req.aborted || res.destroyed,
+    });
+  } finally {
+    clearInterval(keepAlive);
+  }
+  if (req.aborted || res.destroyed) return;
+  if (!browserUseReady) {
+    sseWrite(res, {
+      event: "error",
+      message: "Browser automation is still starting. Please try recording again shortly.",
+    });
+    res.end();
+    return;
+  }
+
   const charged = await chargeRun(authUser, "qf_record");
   if (!charged) {
-    sseHeaders(res);
     sseWrite(res, {
       event: "error",
       code: "insufficient_credits",
@@ -1253,7 +1280,6 @@ router.post("/record", async (req: Request, res: Response) => {
   active.stopped = false;
   active.kind = "record";
 
-  sseHeaders(res);
   sseWrite(res, { event: "started", kind: "record", creditsCharged: CREDITS_PER_RUN });
 
   const store = getStore();
