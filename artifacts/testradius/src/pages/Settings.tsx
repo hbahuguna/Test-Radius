@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/lib/auth";
+import { useCheckoutCreditRefresh } from "@/hooks/use-checkout-credit-refresh";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,7 @@ import {
   saveJiraConnection,
   redeemCoupon,
   previewCoupon,
+  startCheckout,
   type UserApiKey,
   type CreditBalance,
   type CouponPreview,
@@ -84,6 +86,11 @@ const load = async () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const refreshCredits = useCallback(async () => {
+    setCredits(await getCreditBalance());
+  }, []);
+  useCheckoutCreditRefresh(refreshCredits);
+
   const handleSaveKey = async () => {
     if (!newKey.trim()) return;
     setSaving(true);
@@ -145,14 +152,7 @@ const load = async () => {
 
   const handleBuyCredits = async (priceId: string) => {
     try {
-      const res = await fetch("/api/billing/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ priceId }),
-      });
-      if (!res.ok) throw new Error("Checkout failed");
-      const { url } = await res.json();
-      if (url) window.location.href = url;
+      await startCheckout(priceId, "/settings");
     } catch (e: any) {
       toast.error(e?.message || "Could not start checkout");
     }
@@ -192,13 +192,13 @@ const load = async () => {
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" onClick={() => handleBuyCredits("price_credit_pack_10")}>
-                  Buy 10 credits ($5)
+                  Buy 10 credits ($2)
                 </Button>
                 <Button size="sm" onClick={() => handleBuyCredits("price_credit_pack_50")}>
-                  Buy 50 credits ($20)
+                  Buy 50 credits ($10)
                 </Button>
                 <Button size="sm" onClick={() => handleBuyCredits("price_credit_pack_200")}>
-                  Buy 200 credits ($60)
+                  Buy 200 credits ($35)
                 </Button>
               </div>
             </CardContent>
@@ -377,9 +377,9 @@ const load = async () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <Button variant="outline" onClick={() => handleBuyCredits("price_pro_monthly")}>
-              Manage Subscription (Pro — 500 credits/mo)
-            </Button>
+            <p className="text-sm text-muted-foreground">
+              Credit packs are one-time purchases. Buy more credits above when your balance runs low.
+            </p>
           </CardContent>
         </Card>
       </div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/lib/auth";
+import { useCheckoutCreditRefresh } from "@/hooks/use-checkout-credit-refresh";
 import posthog from "@/lib/posthog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -305,6 +306,7 @@ export function QueryFirst() {
   const refreshCredits = useCallback(async () => {
     try { setCredits(await getCredits()); } catch { /* */ }
   }, []);
+  useCheckoutCreditRefresh(refreshCredits);
 
   // Negative amount drains, so the low-balance Buy Credits state is reachable.
   const handleDevGrant = async (amount: number) => {
@@ -329,7 +331,7 @@ export function QueryFirst() {
   const handleBuyCredits = async () => {
     if (!credits) return;
     if (!credits.stripe_configured) {
-      toast.error("Stripe is not configured. Add STRIPE_SECRET_KEY and a real price id to enable checkout.");
+      toast.error("Credit checkout is not configured yet. Contact support to enable purchases.");
       return;
     }
     try {

@@ -14,3 +14,9 @@ Do not assume the Stripe connector and a separately supplied application key add
 **Why:** The connector provisioned a price in a test-mode account, while the supplied application key authenticated to a different live account. Checkout then failed with “No such price” even though each credential worked independently.
 
 **How to apply:** Before provisioning or activating payments, compare non-secret account identifiers and mode through the connector API and the application's initialized Stripe client. Do not inspect key values. Align the catalog, checkout client and webhook within the chosen account/mode, and confirm the intended mode with the user before switching from testing to real payments.
+
+QueryFirst credit purchases are intended to use the user's live Stripe account, not the connector's separate test account.
+
+**Why:** The user explicitly chose live mode for real payments after the account/mode mismatch was explained.
+
+**How to apply:** Preserve that choice during future billing configuration. Reuse matching one-time credit-pack prices from the application account; do not substitute similarly named recurring prices or silently return to the connector's sandbox.

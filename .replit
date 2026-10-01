@@ -155,7 +155,10 @@ VITE_POSTHOG_HOST = "https://us.i.posthog.com"
 SUPABASE_URL = "https://ntcaohfrebjwdtdmzrml.supabase.co"
 ENCRYPTION_KEY = "22bd0ccc0efed785ff33dc661a6597b24b4522e033f42aeb6ee09430cbdb342e"
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "/nix/store/qa9cnw4v5xkxyip6mb9kxqfq1z4x2dx1-chromium-138.0.7204.100/bin/chromium"
-STRIPE_PRICE_CREDIT_PACK_10 = "price_1ULeDGBiW8hf5oLoICn6edoA"
+STRIPE_PRICE_CREDIT_PACK_10 = "price_1ULNboAtANGMGit0wXeXFEEA"
+APP_ORIGIN = "https://testradius.dev"
+STRIPE_PRICE_CREDIT_PACK_200 = "price_1ULdIVAtANGMGit0ru3nOQeY"
+STRIPE_PRICE_CREDIT_PACK_50 = "price_1ULdIKAtANGMGit0TikcWGvC"
 
 [userenv.development]
 DEMO_MODE = "true"
