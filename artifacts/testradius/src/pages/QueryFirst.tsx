@@ -9,6 +9,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   startRecord,
   startReplay,
   startBrowse,
@@ -81,6 +88,8 @@ export function QueryFirst() {
   const [skipDryRun, setSkipDryRun] = useState(true);
   const [credits, setCredits] = useState<QfCredits | null>(null);
   const [granting, setGranting] = useState(false);
+  const [buyOpen, setBuyOpen] = useState(false);
+  const [checkingOut, setCheckingOut] = useState<string | null>(null);
 
   // Run state
   const [mode, setMode] = useState<Mode>("idle");
@@ -328,16 +337,18 @@ export function QueryFirst() {
     }
   };
 
-  const handleBuyCredits = async () => {
+  const handleBuyCredits = async (priceId: string) => {
     if (!credits) return;
     if (!credits.stripe_configured) {
       toast.error("Credit checkout is not configured yet. Contact support to enable purchases.");
       return;
     }
+    setCheckingOut(priceId);
     try {
-      await startCheckout(credits.price_credit_pack_10, "/queryfirst");
+      await startCheckout(priceId, "/queryfirst");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Checkout failed");
+      setCheckingOut(null);
     }
   };
 
@@ -720,7 +731,7 @@ const actionBadgeClass = (action: string) => {
                   <Button
                     size="sm"
                     className="w-full"
-                    onClick={handleBuyCredits}
+                    onClick={() => setBuyOpen(true)}
                     title={
                       credits.stripe_configured
                         ? undefined
@@ -761,6 +772,38 @@ const actionBadgeClass = (action: string) => {
                 )}
               </CardContent>
             </Card>
+
+            <Dialog open={buyOpen} onOpenChange={(o) => !checkingOut && setBuyOpen(o)}>
+              <DialogContent className="max-w-sm">
+                <DialogHeader>
+                  <DialogTitle>Buy credits</DialogTitle>
+                  <DialogDescription>
+                    One credit runs one test. Credits never expire.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-2">
+                  {(credits?.credit_packs ?? []).map((pack) => (
+                    <Button
+                      key={pack.price_id}
+                      variant="outline"
+                      className="h-auto w-full justify-between py-3"
+                      disabled={checkingOut !== null}
+                      onClick={() => handleBuyCredits(pack.price_id)}
+                    >
+                      <span className="font-medium">{pack.credits} credits</span>
+                      <span className="text-xs text-muted-foreground">
+                        ≈ {Math.floor(pack.credits / (credits?.credits_per_run || 2))} tests
+                      </span>
+                    </Button>
+                  ))}
+                  {credits && credits.credit_packs.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      Credit packs are unavailable right now. Contact support.
+                    </p>
+                  )}
+                </div>
+              </DialogContent>
+            </Dialog>
 
             <Card>
               <CardHeader><CardTitle className="text-sm flex items-center gap-1.5"><Globe className="size-3.5" /> Live Browse Agent</CardTitle></CardHeader>

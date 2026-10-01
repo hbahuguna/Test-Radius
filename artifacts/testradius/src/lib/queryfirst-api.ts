@@ -324,13 +324,20 @@ export async function getActiveRun(): Promise<{ active: QfActiveRun | null }> {
   return authedFetch<{ active: QfActiveRun | null }>("/active-run");
 }
 
+export interface QfCreditPack {
+  credits: number;
+  price_id: string;
+}
+
 export interface QfCredits {
   credits_remaining: number;
   credits_used: number;
   credits_per_run: number;
   /** True only when the server allows the local-testing top-up buttons. */
   dev_grant_enabled: boolean;
-  /** Stripe price id the Buy Credits button should check out. */
+  /** Packs the Buy Credits dialog offers. Empty when Stripe is unconfigured. */
+  credit_packs: QfCreditPack[];
+  /** Cheapest configured pack, kept for single-click callers. */
   price_credit_pack_10: string;
   /** False when STRIPE_SECRET_KEY is unset, so checkout cannot succeed. */
   stripe_configured: boolean;

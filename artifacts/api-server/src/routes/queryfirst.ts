@@ -6,6 +6,7 @@ import { userApiKeysTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import { requireSignedUp, type AuthedUser } from "../middlewares/auth";
 import { getOrCreateUser, deductCredit, refundCredits, addCredits } from "../lib/auth";
+import { creditPacks, anyCreditPackConfigured } from "../lib/stripe";
 import { decryptKey } from "../lib/crypto";
 import { logger } from "../lib/logger";
 import { getFieldServeDb, FieldServeDataStore } from "../lib/fieldserve-db";
@@ -141,21 +142,24 @@ const DEV_CREDITS_ENABLED =
   process.env.NODE_ENV !== "production" && process.env.QF_DEV_CREDITS === "true";
 
 /**
- * Stripe price id for the "buy credits" button. Served to the client instead of
- * being hardcoded there: once STRIPE_PRICE_CREDIT_PACK_10 holds a real Stripe id
- * the placeholder key is no longer in CREDIT_PACKS, so a client-sent
- * "price_credit_pack_10" would both fail at Stripe and credit nothing on the
+ * Credit packs offered at checkout. Served to the client instead of being
+ * hardcoded there: once the env vars hold real Stripe ids the placeholder
+ * aliases are no longer in CREDIT_PACKS, so a client-sent
+ * "price_credit_pack_50" would both fail at Stripe and credit nothing on the
  * webhook. The server stays the single source of truth for its own config.
  */
+const CREDIT_PACKS_FOR_UI = creditPacks();
+
+/** The cheapest configured pack, used as the default selection. */
 const CREDIT_PACK_PRICE_ID =
-  process.env.STRIPE_PRICE_CREDIT_PACK_10?.trim() || "price_credit_pack_10";
+  CREDIT_PACKS_FOR_UI[0]?.price_id || "price_credit_pack_10";
 
 /** True only when Stripe is actually usable, so the UI can explain itself
  * instead of firing a request that is guaranteed to 500. */
 const STRIPE_CONFIGURED = Boolean(
   process.env.STRIPE_SECRET_KEY?.trim() &&
-  process.env.STRIPE_WEBHOOK_SECRET?.trim() &&
-  process.env.STRIPE_PRICE_CREDIT_PACK_10?.trim(),
+    process.env.STRIPE_WEBHOOK_SECRET?.trim() &&
+    anyCreditPackConfigured(),
 );
 
 /** Cap a single dev grant so a fat-fingered amount cannot run away. */
@@ -857,6 +861,7 @@ router.get("/credits", async (req: Request, res: Response) => {
       credits_used: user.creditsUsed,
       credits_per_run: CREDITS_PER_RUN,
       dev_grant_enabled: DEV_CREDITS_ENABLED,
+      credit_packs: CREDIT_PACKS_FOR_UI,
       price_credit_pack_10: CREDIT_PACK_PRICE_ID,
       stripe_configured: STRIPE_CONFIGURED,
       platform_model: platformGoogleKey()

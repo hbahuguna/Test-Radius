@@ -75,6 +75,41 @@ export function resolveCheckoutPrice(value: unknown): string | null {
   return null;
 }
 
+/**
+ * The purchasable packs, in display order, with the env var each price id comes
+ * from. The server owns this list so the UI never hardcodes price ids and only
+ * ever offers packs the webhook can actually fulfill.
+ */
+const PACK_SOURCES: ReadonlyArray<{ credits: number; envKey: string; alias: string }> = [
+  { credits: 10, envKey: "STRIPE_PRICE_CREDIT_PACK_10", alias: "price_credit_pack_10" },
+  { credits: 50, envKey: "STRIPE_PRICE_CREDIT_PACK_50", alias: "price_credit_pack_50" },
+  { credits: 200, envKey: "STRIPE_PRICE_CREDIT_PACK_200", alias: "price_credit_pack_200" },
+];
+
+export interface CreditPack {
+  credits: number;
+  price_id: string;
+}
+
+/**
+ * Packs that have a real Stripe price id configured, in display order. An unset
+ * env var yields no entry rather than a placeholder id, so an unconfigured pack
+ * is hidden from the picker instead of 500ing at checkout.
+ */
+export function creditPacks(): CreditPack[] {
+  const packs: CreditPack[] = [];
+  for (const { credits, envKey } of PACK_SOURCES) {
+    const priceId = process.env[envKey]?.trim();
+    if (priceId) packs.push({ credits, price_id: priceId });
+  }
+  return packs;
+}
+
+/** True when at least one pack maps to a real Stripe price id. */
+export function anyCreditPackConfigured(): boolean {
+  return PACK_SOURCES.some(({ envKey }) => Boolean(process.env[envKey]?.trim()));
+}
+
 export function isSubscriptionPrice(priceId: string): boolean {
   return priceId === (process.env.STRIPE_PRICE_PRO_MONTHLY ?? "price_pro_monthly");
 }

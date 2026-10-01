@@ -254,6 +254,51 @@ describe("GET /queryfirst/credits", () => {
     });
   });
 
+  it("offers every configured pack so the UI can show all three options", async () => {
+    await listen(
+      await loadRouter({
+        NODE_ENV: "development",
+        STRIPE_SECRET_KEY: "sk_test_123",
+        STRIPE_WEBHOOK_SECRET: "whsec_test_123",
+        STRIPE_PRICE_CREDIT_PACK_10: "price_1Ten",
+        STRIPE_PRICE_CREDIT_PACK_50: "price_1Fifty",
+        STRIPE_PRICE_CREDIT_PACK_200: "price_1TwoHundred",
+      }),
+    );
+    const res = await fetch(`http://127.0.0.1:${(server!.address() as { port: number }).port}/credits`);
+    expect(await res.json()).toMatchObject({
+      credit_packs: [
+        { credits: 10, price_id: "price_1Ten" },
+        { credits: 50, price_id: "price_1Fifty" },
+        { credits: 200, price_id: "price_1TwoHundred" },
+      ],
+      price_credit_pack_10: "price_1Ten",
+      stripe_configured: true,
+    });
+  });
+
+  it("omits packs with no configured price rather than offering a broken one", async () => {
+    await listen(
+      await loadRouter({
+        NODE_ENV: "development",
+        STRIPE_SECRET_KEY: "sk_test_123",
+        STRIPE_WEBHOOK_SECRET: "whsec_test_123",
+        STRIPE_PRICE_CREDIT_PACK_10: "price_1Ten",
+        STRIPE_PRICE_CREDIT_PACK_50: "price_1Fifty",
+      }),
+    );
+    const res = await fetch(`http://127.0.0.1:${(server!.address() as { port: number }).port}/credits`);
+    const body = await res.json();
+    // The 200 pack is absent entirely: offering it would send a placeholder id
+    // to Stripe and 500 at checkout.
+    expect(body.credit_packs).toEqual([
+      { credits: 10, price_id: "price_1Ten" },
+      { credits: 50, price_id: "price_1Fifty" },
+    ]);
+    // One real pack is still sellable, so checkout stays enabled.
+    expect(body.stripe_configured).toBe(true);
+  });
+
   it("does not enable checkout before webhook verification is configured", async () => {
     await listen(await loadRouter({
       NODE_ENV: "development",
