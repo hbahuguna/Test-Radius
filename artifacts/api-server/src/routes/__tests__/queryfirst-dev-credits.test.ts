@@ -47,6 +47,8 @@ async function loadRouter(env: Record<string, string | undefined>) {
     "NODE_ENV",
     "STRIPE_SECRET_KEY",
     "STRIPE_PRICE_CREDIT_PACK_10",
+    "STRIPE_PRICE_CREDIT_PACK_50",
+    "STRIPE_PRICE_CREDIT_PACK_200",
     "QF_GOOGLE_API_KEY",
     "GOOGLE_API_KEY",
     "QF_GOOGLE_MODEL",
