@@ -59,6 +59,22 @@ export function creditsForPrice(priceId: string): number | null {
   return CREDIT_PACKS[priceId] ?? null;
 }
 
+/** Accept only configured prices; retain legacy UI aliases without sending
+ * placeholder IDs to Stripe. */
+export function resolveCheckoutPrice(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  for (const [alias, key] of [
+    ["price_credit_pack_10", "STRIPE_PRICE_CREDIT_PACK_10"],
+    ["price_credit_pack_50", "STRIPE_PRICE_CREDIT_PACK_50"],
+    ["price_credit_pack_200", "STRIPE_PRICE_CREDIT_PACK_200"],
+    ["price_pro_monthly", "STRIPE_PRICE_PRO_MONTHLY"],
+  ]) {
+    const configured = process.env[key]?.trim();
+    if (configured && (value === alias || value === configured)) return configured;
+  }
+  return null;
+}
+
 export function isSubscriptionPrice(priceId: string): boolean {
   return priceId === (process.env.STRIPE_PRICE_PRO_MONTHLY ?? "price_pro_monthly");
 }

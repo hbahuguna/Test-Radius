@@ -23,11 +23,12 @@ const listLineItems = vi.fn();
 const constructEvent = vi.fn();
 
 vi.mock("../../middlewares/auth", () => ({
-  requireSignedUp: (_req: unknown, _res: unknown, next: () => void) => next(),
+  requireSignedUp: (_req: unknown, res: express.Response) =>
+    res.status(401).json({ error: "unauthorized" }),
 }));
 vi.mock("../../lib/auth", () => ({
   getOrCreateUser: vi.fn(),
-  addCredits: (...args: unknown[]) => addCredits(...args),
+  grantStripeCredits: (...args: unknown[]) => addCredits(...args),
 }));
 vi.mock("../../lib/logger", () => ({
   logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
@@ -41,6 +42,7 @@ vi.mock("../../lib/stripe", () => ({
   }),
   getOrCreateStripeCustomer: vi.fn(),
   creditsForPrice: (priceId: string) => (priceId === "price_pack10" ? 10 : null),
+  resolveCheckoutPrice: (priceId: unknown) => priceId,
   isSubscriptionPrice: () => false,
   STRIPE_PRO_MONTHLY_CREDITS: 500,
 }));
@@ -114,7 +116,7 @@ describe("checkout.session.completed credit grant", () => {
 
     expect(res.status).toBe(200);
     expect(listLineItems).toHaveBeenCalledWith("cs_test_1");
-    expect(addCredits).toHaveBeenCalledWith("user-1", 10, "purchase");
+    expect(addCredits).toHaveBeenCalledWith("user-1", 10, "purchase", "cs_test_1");
   });
 
   it("rejects a tampered payload with 400 and grants nothing", async () => {
@@ -169,7 +171,7 @@ describe("checkout.session.completed credit grant", () => {
 
     const res = await deliver(payload, signature);
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(500);
     expect(addCredits).not.toHaveBeenCalled();
   });
 });

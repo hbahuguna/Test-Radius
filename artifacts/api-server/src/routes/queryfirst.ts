@@ -152,7 +152,11 @@ const CREDIT_PACK_PRICE_ID =
 
 /** True only when Stripe is actually usable, so the UI can explain itself
  * instead of firing a request that is guaranteed to 500. */
-const STRIPE_CONFIGURED = Boolean(process.env.STRIPE_SECRET_KEY?.trim());
+const STRIPE_CONFIGURED = Boolean(
+  process.env.STRIPE_SECRET_KEY?.trim() &&
+  process.env.STRIPE_WEBHOOK_SECRET?.trim() &&
+  process.env.STRIPE_PRICE_CREDIT_PACK_10?.trim(),
+);
 
 /** Cap a single dev grant so a fat-fingered amount cannot run away. */
 const DEV_GRANT_MAX = 100;

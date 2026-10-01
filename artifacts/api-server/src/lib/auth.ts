@@ -182,6 +182,35 @@ export async function addCredits(userId: string, amount: number, reason: string)
 }
 
 /**
+ * Grant a Stripe purchase once, even across retries, concurrent deliveries and
+ * different event types for the same Checkout session. The ledger reference and
+ * balance update commit together, so a failed grant remains safe to retry.
+ */
+export async function grantStripeCredits(
+  userId: string,
+  amount: number,
+  reason: "purchase" | "subscription",
+  stripeReference: string,
+): Promise<boolean> {
+  if (!Number.isSafeInteger(amount) || amount <= 0 || !stripeReference) {
+    throw new Error("Invalid Stripe credit grant");
+  }
+  return db.transaction(async (tx) => {
+    const inserted = await tx.insert(creditLedgerTable)
+      .values({ userId, amount, reason, stripeReference })
+      .onConflictDoNothing({ target: creditLedgerTable.stripeReference })
+      .returning({ id: creditLedgerTable.id });
+    if (inserted.length === 0) return false;
+    const updated = await tx.update(usersTable)
+      .set({ creditsRemaining: sql`${usersTable.creditsRemaining} + ${amount}` })
+      .where(eq(usersTable.id, userId))
+      .returning({ id: usersTable.id });
+    if (updated.length === 0) throw new Error("Stripe credit recipient not found");
+    return true;
+  });
+}
+
+/**
  * Redeem a coupon code for the given user. Validates the code (exists,
  * active, not expired, redemptions remaining) and that the user hasn't
  * already redeemed it, then grants credits via addCredits. Throws CouponError

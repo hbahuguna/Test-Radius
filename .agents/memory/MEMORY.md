@@ -3,3 +3,4 @@
 - [Playwright Chromium on Replit](playwright-replit.md) — Playwright Chromium needs system deps + no-sandbox flags; use system binary via env var.
 - [QueryFirst selector strategy](queryfirst-selector-strategy.md) — text="..." locators must stay as-is through the replay pipeline; converting to nth-child in evaluate A then querying it in evaluate B causes race-condition failures.
 - [Monorepo dependency links](monorepo-dependency-links.md) — a frozen pnpm lockfile can still leave workspace symlinks missing; reinstall all workspace projects when Vite cannot resolve a declared package.
+- [Stripe credential handoff](stripe-credential-handoff.md) — connecting Stripe does not populate the custom Stripe secrets used by the existing billing implementation.

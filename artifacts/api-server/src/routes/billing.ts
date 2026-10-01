@@ -3,19 +3,18 @@ import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import { requireSignedUp } from "../middlewares/auth";
-import { getOrCreateUser, addCredits } from "../lib/auth";
+import { getOrCreateUser, grantStripeCredits } from "../lib/auth";
 import {
   getStripe,
   getOrCreateStripeCustomer,
   creditsForPrice,
+  resolveCheckoutPrice,
   isSubscriptionPrice,
   STRIPE_PRO_MONTHLY_CREDITS,
 } from "../lib/stripe";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
-
-router.use(requireSignedUp);
 
 /**
  * Absolute base URL for Stripe redirect targets.
@@ -48,12 +47,12 @@ function safeReturnTo(value: unknown, fallback: string): string {
  * POST /api/billing/checkout
  * Create a Stripe Checkout session for a credit pack or subscription.
  */
-router.post("/checkout", async (req: Request, res: Response) => {
+router.post("/checkout", requireSignedUp, async (req: Request, res: Response) => {
   const authUser = req.user!;
-  const { priceId } = req.body ?? {};
+  const priceId = resolveCheckoutPrice(req.body?.priceId);
 
   if (!priceId) {
-    res.status(400).json({ error: "price_id_required" });
+    res.status(400).json({ error: "invalid_or_unconfigured_price" });
     return;
   }
 
@@ -93,7 +92,7 @@ router.post("/checkout", async (req: Request, res: Response) => {
  * POST /api/billing/portal
  * Create a Stripe Customer Portal session.
  */
-router.post("/portal", async (req: Request, res: Response) => {
+router.post("/portal", requireSignedUp, async (req: Request, res: Response) => {
   const authUser = req.user!;
   try {
     const user = (await getOrCreateUser(authUser))!;
@@ -137,7 +136,8 @@ router.post("/webhook", async (req: Request, res: Response) => {
 
   try {
     switch (event.type) {
-      case "checkout.session.completed": {
+      case "checkout.session.completed":
+      case "checkout.session.async_payment_succeeded": {
         const session = event.data.object as import("stripe").Stripe.Checkout.Session;
         const userId = session.metadata?.userId;
         // Guard on mode only. Do NOT require session.line_items here: the
@@ -148,17 +148,16 @@ router.post("/webhook", async (req: Request, res: Response) => {
           const lineItems = await stripe.checkout.sessions.listLineItems(session.id);
           const priceId = lineItems.data[0]?.price?.id;
           if (!priceId) {
-            logger.warn({ sessionId: session.id }, "checkout.session.completed had no line items");
-            break;
+            throw new Error("Paid Checkout session has no line items");
           }
           const credits = creditsForPrice(priceId);
           if (!credits) {
             // An unmapped price means we cannot know what was bought; granting
             // a guess would be wrong, so surface it loudly instead.
             logger.error({ priceId, sessionId: session.id }, "purchased price not in CREDIT_PACKS");
-            break;
+            throw new Error("Purchased Stripe price is not configured");
           }
-          await addCredits(userId, credits, "purchase");
+          await grantStripeCredits(userId, credits, "purchase", session.id);
           logger.info({ userId, credits, priceId }, "Added purchased credits");
         }
         break;
@@ -188,6 +187,7 @@ router.post("/webhook", async (req: Request, res: Response) => {
       }
       case "invoice.paid": {
         const invoice = event.data.object as import("stripe").Stripe.Invoice;
+        if (!invoice.id) throw new Error("Paid invoice has no Stripe ID");
         const customerId = typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
         if (customerId) {
           const [u] = await db
@@ -196,7 +196,7 @@ router.post("/webhook", async (req: Request, res: Response) => {
             .where(eq(usersTable.stripeCustomerId, customerId))
             .limit(1);
           if (u) {
-            await addCredits(u.id, STRIPE_PRO_MONTHLY_CREDITS, "subscription");
+            await grantStripeCredits(u.id, STRIPE_PRO_MONTHLY_CREDITS, "subscription", invoice.id);
           }
         }
         break;

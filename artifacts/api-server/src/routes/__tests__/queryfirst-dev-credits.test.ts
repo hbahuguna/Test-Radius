@@ -243,6 +243,7 @@ describe("GET /queryfirst/credits", () => {
       await loadRouter({
         NODE_ENV: "development",
         STRIPE_SECRET_KEY: "sk_test_123",
+        STRIPE_WEBHOOK_SECRET: "whsec_test_123",
         STRIPE_PRICE_CREDIT_PACK_10: "price_1RealId",
       }),
     );
@@ -251,5 +252,16 @@ describe("GET /queryfirst/credits", () => {
       price_credit_pack_10: "price_1RealId",
       stripe_configured: true,
     });
+  });
+
+  it("does not enable checkout before webhook verification is configured", async () => {
+    await listen(await loadRouter({
+      NODE_ENV: "development",
+      STRIPE_SECRET_KEY: "sk_test_123",
+      STRIPE_PRICE_CREDIT_PACK_10: "price_1RealId",
+      STRIPE_WEBHOOK_SECRET: "",
+    }));
+    const res = await fetch(`http://127.0.0.1:${(server!.address() as { port: number }).port}/credits`);
+    expect(await res.json()).toMatchObject({ stripe_configured: false });
   });
 });

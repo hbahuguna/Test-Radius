@@ -7,7 +7,7 @@ export const usersTable = pgTable("users", {
   email: text("email").notNull().unique(),
   fullName: text("full_name"),
   avatarUrl: text("avatar_url"),
-  creditsRemaining: integer("credits_remaining").notNull().default(50),
+  creditsRemaining: integer("credits_remaining").notNull().default(10),
   creditsUsed: integer("credits_used").notNull().default(0),
   plan: text("plan").notNull().default("free"),  // free | pro | enterprise
   stripeCustomerId: text("stripe_customer_id"),
@@ -65,6 +65,7 @@ export const creditLedgerTable = pgTable("credit_ledger", {
   amount: integer("amount").notNull(),
   reason: text("reason").notNull(),  // signup_bonus | run | purchase | subscription | refund_auth_failure | coupon_redemption | jira_import | copy_test
   runId: uuid("run_id"),
+  stripeReference: text("stripe_reference").unique(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
