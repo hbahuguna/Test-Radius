@@ -12,7 +12,7 @@ lastUpdated: 2026-06-04
 | `NEO4J_URL` | Yes | — | Neo4j bolt URL (`bolt://neo4j:7687`) |
 | `NEO4J_USER` | Yes | `neo4j` | Neo4j username |
 | `NEO4J_PASSWORD` | Yes | — | Neo4j password |
-| `DEMO_MODE` | No | `false` | Bypass authentication when `true` |
+| `DEMO_MODE` | No | `false` | Development-only auth bypass; effective only when `NODE_ENV=development` and ignored in production |
 | `EXECUTOR_URL` | Yes | — | Executor service URL (`http://executor:8001`) |
 | `GITHUB_TOKEN` | No | — | GitHub token for PR file fetching |
 
@@ -54,7 +54,7 @@ NEO4J_URL=bolt://neo4j:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=testsquad_password
 
-# Demo mode (skip auth)
+# Local development demo mode (skips auth only when NODE_ENV=development)
 DEMO_MODE=true
 
 # Executor

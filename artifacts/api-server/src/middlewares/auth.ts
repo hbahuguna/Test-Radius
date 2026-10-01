@@ -19,7 +19,9 @@ declare global {
   }
 }
 
-const DEMO_MODE = process.env.DEMO_MODE?.toLowerCase() === "true" || process.env.DEMO_MODE === "1";
+const DEMO_MODE =
+  process.env.NODE_ENV === "development" &&
+  (process.env.DEMO_MODE?.toLowerCase() === "true" || process.env.DEMO_MODE === "1");
 
 const JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
 const SUPABASE_URL = process.env.SUPABASE_URL;

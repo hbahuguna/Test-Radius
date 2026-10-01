@@ -5,7 +5,7 @@ interface ProtectedRouteProps {
   children: ReactNode;
 }
 
-const IS_DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
+const IS_DEMO_MODE = import.meta.env.DEV && import.meta.env.VITE_DEMO_MODE === "true";
 
 /**
  * Redirects unauthenticated users to /login. While the session is resolving,
