@@ -64,6 +64,7 @@ afterAll(async () => {
 });
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.stubEnv("NODE_ENV", "production");
   vi.stubEnv("APP_ORIGIN", "https://app.example.invalid");
   vi.stubEnv("STRIPE_WEBHOOK_ENDPOINT_ID", "we_fixture");
   vi.stubEnv("STRIPE_WEBHOOK_SECRET", "whsec_fixture");
@@ -128,6 +129,28 @@ describe("checkout waits for credit fulfillment readiness", () => {
 
   it("blocks an endpoint that does not handle delayed payment success", async () => {
     mocks.retrieve.mockResolvedValue({ ...endpoint, enabled_events: ["checkout.session.completed"] });
+    expect((await checkout()).status).toBe(503);
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  // Locally the webhook arrives via `stripe listen`, not a Dashboard endpoint,
+  // so requiring STRIPE_WEBHOOK_ENDPOINT_ID would block all local checkout.
+  it("skips the endpoint check outside production", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("STRIPE_WEBHOOK_ENDPOINT_ID", "");
+    vi.stubEnv("APP_ORIGIN", "http://localhost:3000");
+    expect((await checkout()).status).toBe(200);
+    expect(mocks.retrieve).not.toHaveBeenCalled();
+    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({
+      success_url: "http://localhost:3000/settings?checkout=success",
+    }));
+  });
+
+  // Stripe is live-mode here, so an unverified webhook would leave a real
+  // payment with no credits delivered.
+  it("still requires the signing secret outside production", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("STRIPE_WEBHOOK_SECRET", "");
     expect((await checkout()).status).toBe(503);
     expect(mocks.create).not.toHaveBeenCalled();
   });
