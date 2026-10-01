@@ -47,6 +47,9 @@ async function loadRouter(env: Record<string, string | undefined>) {
     "NODE_ENV",
     "STRIPE_SECRET_KEY",
     "STRIPE_PRICE_CREDIT_PACK_10",
+    "QF_GOOGLE_API_KEY",
+    "GOOGLE_API_KEY",
+    "QF_GOOGLE_MODEL",
   ]) {
     delete process.env[key];
   }
@@ -297,6 +300,47 @@ describe("GET /queryfirst/credits", () => {
     ]);
     // One real pack is still sellable, so checkout stays enabled.
     expect(body.stripe_configured).toBe(true);
+  });
+
+  // Regression guard: an empty-string QF_GOOGLE_API_KEY must not shadow a real
+  // GOOGLE_API_KEY. With `??` the empty string won, platform mode silently
+  // turned off, and credit-metered runs failed demanding a poolside BYOK key.
+  it("falls back to GOOGLE_API_KEY when QF_GOOGLE_API_KEY is blank", async () => {
+    await listen(
+      await loadRouter({
+        NODE_ENV: "development",
+        QF_GOOGLE_API_KEY: "",
+        GOOGLE_API_KEY: "platform-key",
+        QF_GOOGLE_MODEL: "gemini-3.5-flash",
+      }),
+    );
+    const res = await fetch(`http://127.0.0.1:${(server!.address() as { port: number }).port}/credits`);
+    expect(await res.json()).toMatchObject({ platform_model: "gemini-3.5-flash" });
+  });
+
+  it("prefers QF_GOOGLE_API_KEY when both are set", async () => {
+    await listen(
+      await loadRouter({
+        NODE_ENV: "development",
+        QF_GOOGLE_API_KEY: "qf-key",
+        GOOGLE_API_KEY: "platform-key",
+        QF_GOOGLE_MODEL: "gemini-3.5-flash",
+      }),
+    );
+    const res = await fetch(`http://127.0.0.1:${(server!.address() as { port: number }).port}/credits`);
+    expect(await res.json()).toMatchObject({ platform_model: "gemini-3.5-flash" });
+  });
+
+  it("treats a whitespace-only key as unset", async () => {
+    await listen(
+      await loadRouter({
+        NODE_ENV: "development",
+        QF_GOOGLE_API_KEY: "   ",
+        GOOGLE_API_KEY: "   ",
+      }),
+    );
+    const res = await fetch(`http://127.0.0.1:${(server!.address() as { port: number }).port}/credits`);
+    expect(await res.json()).toMatchObject({ platform_model: null });
   });
 
   it("does not enable checkout before webhook verification is configured", async () => {

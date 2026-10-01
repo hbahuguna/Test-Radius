@@ -174,7 +174,14 @@ const DEV_DRAIN_MAX = 100;
  * their credit balance.
  */
 function platformGoogleKey(): string {
-  return (process.env.QF_GOOGLE_API_KEY ?? process.env.GOOGLE_API_KEY ?? "").trim();
+  // Pick the first non-blank value. `??` alone is wrong here: it only falls
+  // through on null/undefined, so an empty-string QF_GOOGLE_API_KEY would win
+  // over a real GOOGLE_API_KEY and silently disable platform mode.
+  for (const key of [process.env.QF_GOOGLE_API_KEY, process.env.GOOGLE_API_KEY]) {
+    const value = key?.trim();
+    if (value) return value;
+  }
+  return "";
 }
 
 interface LlmConfig {
