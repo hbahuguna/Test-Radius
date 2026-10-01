@@ -20,3 +20,9 @@ QueryFirst credit purchases are intended to use the user's live Stripe account, 
 **Why:** The user explicitly chose live mode for real payments after the account/mode mismatch was explained.
 
 **How to apply:** Preserve that choice during future billing configuration. Reuse matching one-time credit-pack prices from the application account; do not substitute similarly named recurring prices or silently return to the connector's sandbox.
+
+Workspace secret existence is not proof that the current published server has those secrets.
+
+**Why:** Development checkout and signature verification succeeded, while the published server reported a missing Stripe API key. The production existence tool included shared keys even though the running deployment lacked them. Replit documentation identifies deployment secrets as a separate publishing configuration.
+
+**How to apply:** Have the user ensure both Stripe secrets are included under Publishing → Adjust settings before republishing. Verify a benign signed request against the published webhook before enabling it; do not rely only on the workspace or production existence flags.

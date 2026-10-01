@@ -57,8 +57,32 @@ router.post("/checkout", requireSignedUp, async (req: Request, res: Response) =>
   }
 
   try {
-    const user = (await getOrCreateUser(authUser))!;
     const stripe = getStripe();
+    const endpointId = process.env.STRIPE_WEBHOOK_ENDPOINT_ID?.trim();
+    const unavailable = {
+      error: "billing_not_active",
+      message: "Credit checkout is not active yet. Please try again shortly.",
+    };
+    if (!endpointId || !process.env.STRIPE_WEBHOOK_SECRET?.trim()) {
+      res.status(503).json(unavailable);
+      return;
+    }
+    // Do not take payment while delivery of purchased credits is disabled.
+    // Check at checkout time so activating the webhook needs no second publish.
+    const endpoint = await stripe.webhookEndpoints.retrieve(endpointId);
+    const purchaseEvents = ["checkout.session.completed", "checkout.session.async_payment_succeeded"] as const;
+    const receivesPurchases = purchaseEvents.every((event) =>
+      endpoint.enabled_events.includes("*") || endpoint.enabled_events.includes(event),
+    );
+    if (
+      endpoint.status !== "enabled" ||
+      endpoint.url !== `${redirectBase(req)}/api/billing/webhook` ||
+      !receivesPurchases
+    ) {
+      res.status(503).json(unavailable);
+      return;
+    }
+    const user = (await getOrCreateUser(authUser))!;
     const customerId = await getOrCreateStripeCustomer(user.id, user.email, user.fullName);
 
     // Persist the Stripe customer id on the user
