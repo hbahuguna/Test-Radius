@@ -39,6 +39,7 @@ export function BlogPost() {
   const [markdown, setMarkdown] = useState("");
   const [title, setTitle] = useState("Loading...");
   const [date, setDate] = useState("");
+  const [author, setAuthor] = useState("");
   const [description, setDescription] = useState("");
   const [imageUrl, setImageUrl] = useState<string | undefined>();
   const [error, setError] = useState(false);
@@ -69,6 +70,7 @@ export function BlogPost() {
 
         setTitle(meta.title || "Untitled Article");
         setDate(meta.date ? new Date(meta.date).toLocaleDateString() : "");
+        setAuthor(meta.author || "");
         setDescription(meta.description || "");
         setImageUrl(meta.imageUrl);
 
@@ -110,7 +112,27 @@ export function BlogPost() {
     a: ({ href, children }: any) => {
       const url = href || "";
       const isYoutube = /youtube\.com|youtu\.be/.test(url);
-      
+
+      // In-page anchor (e.g. "/#early-access-form") → smooth-scroll to element
+      // on the current page instead of navigating away.
+      if (url.startsWith("/#")) {
+        const elementId = url.slice(2);
+        return (
+          <a
+            href={url}
+            className="text-primary font-medium hover:underline"
+            onClick={(e) => {
+              e.preventDefault();
+              document
+                .getElementById(elementId)
+                ?.scrollIntoView({ behavior: "smooth" });
+            }}
+          >
+            {children}
+          </a>
+        );
+      }
+
       // If it's a YouTube link, check if it should be embedded
       // We look for links where the text is the URL itself or just "YouTube"
       const childrenText = React.Children.toArray(children).join("").trim();
@@ -155,7 +177,7 @@ export function BlogPost() {
             </span>
           </h1>
           <p className="text-lg text-primary/80 font-medium mb-4 italic">
-            {date}
+            {author ? `By ${author} · ${date}` : date}
           </p>
           {description && (
             <p className="text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
